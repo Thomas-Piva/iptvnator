@@ -186,9 +186,7 @@ export class AppComponent implements OnInit {
             const result = await window.electron.checkEpgFreshness(urls, 12);
 
             if (result.freshUrls.length > 0) {
-                console.log(
-                    `EPG: ${result.freshUrls.length} source(s) already fresh, skipping fetch`
-                );
+                // EPG sources already fresh, skipping fetch
                 // Show snackbar if all EPG sources are fresh (no stale URLs)
                 if (result.staleUrls.length === 0) {
                     this.snackBar.open(
@@ -200,9 +198,7 @@ export class AppComponent implements OnInit {
             }
 
             if (result.staleUrls.length > 0) {
-                console.log(
-                    `EPG: Fetching ${result.staleUrls.length} stale source(s)`
-                );
+                // Fetching stale source(s)
                 this.epgService.fetchEpg(result.staleUrls);
             }
         } catch (error) {
@@ -238,9 +234,7 @@ export class AppComponent implements OnInit {
 
                         // Trigger auto-update if there are playlists to update
                         if (playlistsToUpdate.length > 0) {
-                            console.log(
-                                `Auto-updating ${playlistsToUpdate.length} playlist(s) on startup`
-                            );
+                            // Auto-updating playlist(s) on startup
                             this.dataService.sendIpcEvent(
                                 AUTO_UPDATE_PLAYLISTS,
                                 playlistsToUpdate

@@ -18,7 +18,7 @@ ipcMain.handle('set-user-agent', (event, userAgent, referer) => {
  */
 export function setUserAgent(userAgent: string, referer?: string): void {
     if (userAgent === undefined || userAgent === null || userAgent === '') {
-        userAgent = this.defaultUserAgent;
+        return; // No user agent provided, keep Electron default
     }
 
     // Remove trailing slash from referer if it exists

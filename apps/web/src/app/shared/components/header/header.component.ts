@@ -1,6 +1,5 @@
 import {
     Component,
-    OnInit,
     inject,
     input,
     output,
@@ -17,7 +16,6 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { ActivatedRoute, Router } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
 import { DataService } from 'services';
-//import { shell } from 'electron';
 import { AddPlaylistMenuComponent, PlaylistType } from 'components';
 import { AboutDialogComponent } from '../about-dialog/about-dialog.component';
 import { AddPlaylistDialogComponent } from '../add-playlist/add-playlist-dialog.component';
@@ -41,7 +39,7 @@ import { FilterSortMenuComponent } from '../filter-sort-menu/filter-sort-menu.co
         TranslateModule,
     ],
 })
-export class HeaderComponent implements OnInit {
+export class HeaderComponent {
     private activatedRoute = inject(ActivatedRoute);
     private dialog = inject(MatDialog);
     private dataService = inject(DataService);
@@ -62,10 +60,6 @@ export class HeaderComponent implements OnInit {
 
     readonly isHome = false;
 
-    ngOnInit() {
-        // Initialization if needed
-    }
-
     /**
      * Navigates to the settings page
      */
@@ -80,14 +74,13 @@ export class HeaderComponent implements OnInit {
         this.router.navigate(['/workspace', 'global-favorites']);
     }
 
-    /**
-     * Opens the provided URL string in new browser window
-     * @param url url to open
-     */
     async openUrl(url: string): Promise<void> {
+        // Only allow http/https URLs to prevent open redirects
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            return;
+        }
         if (this.isDesktop) {
-            console.log('TODO: implement me');
-            // await shell.openExternal(url);
+            // Desktop: shell.openExternal not available in preload context
         } else {
             window.open(url, '_blank');
         }

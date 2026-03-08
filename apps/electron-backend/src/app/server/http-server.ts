@@ -123,6 +123,14 @@ export class HttpServer {
         this.remoteControlHandlers.set(path, handler);
     }
 
+    /** Standard security headers for all responses */
+    private setSecurityHeaders(res: http.ServerResponse): void {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('X-XSS-Protection', '1; mode=block');
+        res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    }
+
     /**
      * Handle incoming HTTP requests
      */
@@ -130,6 +138,7 @@ export class HttpServer {
         req: http.IncomingMessage,
         res: http.ServerResponse
     ): void {
+        this.setSecurityHeaders(res);
         const url = req.url || '/';
 
         // Handle API requests

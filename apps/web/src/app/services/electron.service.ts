@@ -37,7 +37,6 @@ export class ElectronService extends DataService {
 
     constructor() {
         super();
-        console.log('Electron service initialized...');
         this.setupPlayerErrorListener();
         this.setupPortalDebugListener();
     }
@@ -179,7 +178,7 @@ export class ElectronService extends DataService {
                 { duration: 2000 }
             );
         } else {
-            console.log('Unknown type', type);
+            console.warn(`Unknown type: ${type}`);
         }
     }
 
@@ -360,7 +359,7 @@ export class ElectronService extends DataService {
 
             // Log error to console
             if (isSilentAction) {
-                console.log(
+                console.warn(
                     `Background Xtream action failed (${action ?? 'unknown'}):`,
                     normalizedMessage
                 );
@@ -409,7 +408,7 @@ export class ElectronService extends DataService {
                     maybeError.error &&
                     typeof maybeError.error === 'object' &&
                     'message' in
-                        (maybeError.error as Record<string, unknown>) &&
+                    (maybeError.error as Record<string, unknown>) &&
                     typeof (maybeError.error as Record<string, unknown>)
                         .message === 'string'
                 ) {
@@ -451,7 +450,7 @@ export class ElectronService extends DataService {
     private getListenerForCommand(command: string): any {
         // This is a placeholder. In a real implementation, you would need to
         // store the actual listener functions to be able to remove them
-        return () => {};
+        return () => { };
     }
 
     listenOn(command: string, callback: (...args: any[]) => void): void {

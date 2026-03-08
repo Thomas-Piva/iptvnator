@@ -326,7 +326,6 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
      * Handle remote control channel change
      */
     handleRemoteChannelChange(direction: 'up' | 'down'): void {
-        console.log(`Remote control: changing channel ${direction}`);
 
         // Use combineLatest to get both values and take only the first emission
         combineLatest([this.channels$, this.store.select(selectActive)])
@@ -581,10 +580,10 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
 
     private handleRemoteControlCommand(command: {
         type:
-            | 'channel-select-number'
-            | 'volume-up'
-            | 'volume-down'
-            | 'volume-toggle-mute';
+        | 'channel-select-number'
+        | 'volume-up'
+        | 'volume-down'
+        | 'volume-toggle-mute';
         number?: number;
     }): void {
         if (command.type === 'channel-select-number' && command.number) {

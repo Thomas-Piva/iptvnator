@@ -40,16 +40,11 @@ export class FileUploadComponent {
                 .openPlaylistFromFile()
                 .then((playlistObject) => {
                     if (playlistObject) {
-                        console.log(
-                            'Received playlist from Electron:',
-                            playlistObject
-                        );
                         this.store.dispatch(
                             PlaylistActions.addPlaylist({ playlist: playlistObject })
                         );
                     } else {
                         // User canceled the dialog
-                        console.log('File selection was canceled.');
                     }
                 })
                 .catch((error) => {

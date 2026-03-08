@@ -48,7 +48,6 @@ export class PwaService extends DataService {
 
     constructor() {
         super();
-        console.log('PWA service initialized...');
     }
 
     /** Uses service worker mechanism to check for available application updates */
@@ -102,8 +101,7 @@ export class PwaService extends DataService {
             .pipe(
                 catchError((error) => {
                     this.snackBar.open(
-                        `Error: ${error.message ?? 'Unknown error'}, status: ${
-                            error.status ?? 500
+                        `Error: ${error.message ?? 'Unknown error'}, status: ${error.status ?? 500
                         }`,
                         'Close',
                         {
@@ -182,10 +180,10 @@ export class PwaService extends DataService {
     }) {
         const headers = payload.macAddress
             ? {
-                  headers: {
-                      Cookie: `mac=${payload.macAddress}`,
-                  },
-              }
+                headers: {
+                    Cookie: `mac=${payload.macAddress}`,
+                },
+            }
             : {};
         const requestPayload = {
             method: 'GET',
@@ -196,10 +194,10 @@ export class PwaService extends DataService {
             },
             ...(payload.macAddress
                 ? {
-                      headers: {
-                          Cookie: `mac=${payload.macAddress}`,
-                      },
-                  }
+                    headers: {
+                        Cookie: `mac=${payload.macAddress}`,
+                    },
+                }
                 : {}),
         };
         const context = createPortalDebugRequestContext({
@@ -233,7 +231,7 @@ export class PwaService extends DataService {
                 );
 
                 if (isSilentAction) {
-                    console.log(
+                    console.warn(
                         `Background Xtream action failed (${action ?? 'unknown'}):`,
                         normalizedMessage
                     );
@@ -270,7 +268,7 @@ export class PwaService extends DataService {
 
             // Log error to console
             if (isSilentAction) {
-                console.log(
+                console.warn(
                     `Background Xtream action failed (${action ?? 'unknown'}):`,
                     normalizedMessage
                 );
@@ -319,7 +317,7 @@ export class PwaService extends DataService {
                     typeof maybeError.error === 'object' &&
                     'message' in (maybeError.error as Record<string, unknown>) &&
                     typeof (maybeError.error as Record<string, unknown>).message ===
-                        'string'
+                    'string'
                 ) {
                     return (maybeError.error as Record<string, string>).message;
                 }
