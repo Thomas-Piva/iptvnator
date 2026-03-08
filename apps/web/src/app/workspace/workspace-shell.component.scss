@@ -9,7 +9,7 @@
 .workspace-shell {
     display: grid;
     grid-template-columns: 60px 1fr;
-    grid-template-rows: 56px 1fr;
+    grid-template-rows: 56px minmax(0, 1fr) auto;
     width: 100%;
     height: 100%;
     min-height: 0;
@@ -21,7 +21,7 @@
 // ─── App Rail (Sidebar) ───────────────────────────────────────────────────────
 .app-rail {
     grid-column: 1;
-    grid-row: 1 / span 2;
+    grid-row: 1 / span 3;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -137,7 +137,7 @@
 
 // ─── Rail Divider ─────────────────────────────────────────────────────────────
 .rail-divider {
-    width: 24px;
+    width: 44px;
     height: 1px;
     background: var(--mat-sys-outline-variant);
     margin: 6px 0;
@@ -155,7 +155,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 0 16px;
+    padding: 0 24px;
     height: 56px;
     border-bottom: 1px solid var(--mat-sys-outline-variant);
     background: var(--app-header-bg, var(--mat-sys-surface-container-low));
@@ -196,7 +196,7 @@
 
     &:focus-within {
         border-color: var(--mat-sys-primary);
-        box-shadow: 0 0 0 3px rgba(var(--mat-sys-primary), 0.12);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--mat-sys-primary) 12%, transparent);
     }
 
     mat-icon {
@@ -253,7 +253,7 @@
 .header-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     app-region: no-drag;
 
     button,
@@ -283,6 +283,15 @@
     }
 }
 
+.header-actions-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--mat-sys-outline-variant);
+    margin: 0 4px;
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
 // ─── Workspace Body ───────────────────────────────────────────────────────────
 .workspace-body {
     grid-column: 2;
@@ -297,6 +306,11 @@
     &.single-pane {
         grid-template-columns: 1fr;
     }
+}
+
+.workspace-now-playing {
+    grid-column: 2;
+    grid-row: 3;
 }
 
 // ─── Context Panel ────────────────────────────────────────────────────────────
@@ -426,10 +440,17 @@
 }
 
 // ─── Responsive ───────────────────────────────────────────────────────────────
+@media (max-width: 960px) {
+    .search-field {
+        min-width: 120px;
+        flex: 1 1 150px;
+    }
+}
+
 @media (max-width: 780px) {
     .workspace-shell {
         grid-template-columns: 56px 1fr;
-        grid-template-rows: 56px 1fr;
+        grid-template-rows: 56px 1fr auto;
     }
 
     .workspace-header {
@@ -449,7 +470,7 @@
 @media (max-width: 640px) {
     .workspace-shell {
         grid-template-columns: 1fr;
-        grid-template-rows: 52px 56px 1fr;
+        grid-template-rows: 52px 56px minmax(0, 1fr) auto;
     }
 
     .app-rail {
@@ -490,5 +511,10 @@
     .workspace-body {
         grid-column: 1;
         grid-row: 3;
+    }
+
+    .workspace-now-playing {
+        grid-column: 1;
+        grid-row: 4;
     }
 }

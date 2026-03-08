@@ -146,6 +146,7 @@ const CREATE_TABLE_STATEMENTS = [
     `CREATE INDEX IF NOT EXISTS idx_epg_channels_name ON epg_channels(display_name)`,
     `CREATE INDEX IF NOT EXISTS idx_epg_programs_channel ON epg_programs(channel_id)`,
     `CREATE INDEX IF NOT EXISTS idx_epg_programs_start ON epg_programs(start)`,
+    `CREATE INDEX IF NOT EXISTS idx_epg_programs_stop ON epg_programs(stop)`,
     `CREATE INDEX IF NOT EXISTS idx_epg_programs_time_range ON epg_programs(channel_id, start, stop)`,
     // FTS5 virtual table for full-text search on EPG programs
     `CREATE VIRTUAL TABLE IF NOT EXISTS epg_programs_fts USING fts5(
@@ -231,6 +232,8 @@ const MIGRATION_STATEMENTS = [
     `ALTER TABLE playlists ADD COLUMN favorites TEXT`,
     `ALTER TABLE playlists ADD COLUMN recently_viewed TEXT`,
     `ALTER TABLE playlists ADD COLUMN payload TEXT`,
+    // v1.2.0 -> v1.3.0: Add position column to favorites for global favorites ordering
+    `ALTER TABLE favorites ADD COLUMN position INTEGER DEFAULT 0`,
 ];
 
 /**

@@ -7,19 +7,28 @@ import {
     OnInit,
     signal,
 } from '@angular/core';
+import { MatIconButton } from '@angular/material/button';
+import { MatIcon } from '@angular/material/icon';
+import { MatMenuModule } from '@angular/material/menu';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
+import { MatSnackBar } from '@angular/material/snack-bar';
+import { MatTooltip } from '@angular/material/tooltip';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Store } from '@ngrx/store';
-import { TranslatePipe } from '@ngx-translate/core';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { PlaylistsService } from 'services';
 import {
     createStalkerVodItem,
     PlaybackPositionData,
+    ResolvedPortalPlayback,
     StalkerVodDetails,
     VodDetailsItem,
 } from 'shared-interfaces';
 import { DownloadsService } from '../../services/downloads.service';
+import { ExternalPlaybackService } from '../../services/external-playback.service';
+import { PlayerService } from '../../services/player.service';
 import { GridListComponent } from '../../shared/components/grid-list/grid-list.component';
+import { PlaylistErrorViewComponent } from '../../shared/components/playlist-error-view/playlist-error-view.component';
 import { createLogger } from '../../shared/utils/logger';
 import { StalkerVodSource } from '../../stalker/models';
 import { StalkerSeriesViewComponent } from '../../stalker/stalker-series-view/stalker-series-view.component';
@@ -34,9 +43,11 @@ import {
 } from '../../stalker/stalker-vod.utils';
 import { StalkerStore } from '../../stalker/stalker.store';
 import { XTREAM_DATA_SOURCE } from '../data-sources';
-import { PlaylistErrorViewComponent } from '../playlist-error-view/playlist-error-view.component';
+import { XtreamCategorySortMode } from '../stores/features/with-selection.feature';
 import { XtreamStore } from '../stores/xtream.store';
 import { VodDetailsComponent } from '../vod-details/vod-details.component';
+
+const SORT_STORAGE_KEY = 'xtream-category-sort-mode';
 
 interface CategoryContentItem {
     id?: number | string;
@@ -75,7 +86,11 @@ interface DownloadVodData {
     styleUrls: ['./category-content-view.component.scss'],
     imports: [
         GridListComponent,
+        MatIcon,
+        MatIconButton,
+        MatMenuModule,
         MatPaginatorModule,
+        MatTooltip,
         PlaylistErrorViewComponent,
         StalkerSeriesViewComponent,
         TranslatePipe,
@@ -86,6 +101,10 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
     private readonly activatedRoute = inject(ActivatedRoute);
     private readonly router = inject(Router);
     private readonly dataSource = inject(XTREAM_DATA_SOURCE);
+    private readonly playerService = inject(PlayerService);
+    readonly externalPlayback = inject(ExternalPlaybackService);
+    private readonly snackBar = inject(MatSnackBar);
+    private readonly translateService = inject(TranslateService);
 
     readonly isStalker = this.activatedRoute.snapshot.data['api'] === 'stalker';
     private readonly logger = createLogger('CategoryContentView');
@@ -100,6 +119,8 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
     private readonly playlistService = inject(PlaylistsService);
     private readonly downloadsService = inject(DownloadsService);
     private readonly favoritesRefresh = createRefreshTrigger();
+    readonly inlinePlayback = signal<ResolvedPortalPlayback | null>(null);
+    private lastInlineSaveTime = 0;
 
     readonly limit = this.store.limit;
     readonly pageIndex = this.store.page;
@@ -207,6 +228,11 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
                         }
                     );
             }
+
+            effect(() => {
+                this.selectedItem()?.id;
+                this.closeInlinePlayer();
+            });
         }
     }
 
@@ -281,6 +307,10 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
     readonly selectedItem = this.store.selectedItem;
     readonly totalPages = this.store.getTotalPages;
     readonly bigStore = inject(Store);
+    readonly contentSortMode = !this.isStalker
+        ? (this.store as unknown as InstanceType<typeof XtreamStore>)
+              .contentSortMode
+        : signal<XtreamCategorySortMode>('date-desc');
 
     /** Computed VodDetailsItem for the vod-details component */
     readonly vodDetailsItem = computed<VodDetailsItem | null>(() => {
@@ -330,11 +360,29 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
 
     seasons = [];
 
+    setContentSortMode(mode: XtreamCategorySortMode): void {
+        (
+            this.store as unknown as InstanceType<typeof XtreamStore>
+        ).setContentSortMode(mode);
+        localStorage.setItem(SORT_STORAGE_KEY, mode);
+    }
+
     ngOnInit() {
         const { categoryId } = this.activatedRoute.snapshot.params;
 
         // Ensure playback positions are loaded (Xtream only - Stalker is handled via effect in constructor)
         if (!this.isStalker) {
+            const savedSortMode = localStorage.getItem(SORT_STORAGE_KEY);
+            if (
+                savedSortMode === 'date-desc' ||
+                savedSortMode === 'date-asc' ||
+                savedSortMode === 'name-asc' ||
+                savedSortMode === 'name-desc'
+            ) {
+                (
+                    this.store as unknown as InstanceType<typeof XtreamStore>
+                ).setContentSortMode(savedSortMode);
+            }
             const xtreamStore = this.store as unknown as CategoryStoreLike;
             const playlistId = xtreamStore.currentPlaylist?.()?.id;
             if (playlistId) {
@@ -507,7 +555,7 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
     /** Handle play from vod-details component */
     onVodPlay(item: VodDetailsItem): void {
         if (item.type === 'stalker') {
-            this.createLinkToPlayVod(
+            void this.startStalkerVodPlayback(
                 item.cmd,
                 item.data.info?.name,
                 item.data.info?.movie_image
@@ -521,15 +569,10 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
         positionSeconds: number;
     }): void {
         if (event.item.type === 'stalker') {
-            const stalkerStore = this.store as InstanceType<
-                typeof StalkerStore
-            >;
-            stalkerStore.createLinkToPlayVod(
+            void this.startStalkerVodPlayback(
                 event.item.cmd,
                 event.item.data.info?.name,
                 event.item.data.info?.movie_image,
-                undefined, // episodeNum
-                undefined, // episodeId
                 event.positionSeconds
             );
         }
@@ -552,7 +595,51 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
 
     /** Handle back from vod-details component */
     onVodBack(): void {
+        this.closeInlinePlayer();
         this.store.setSelectedItem(null);
+    }
+
+    handleInlineTimeUpdate(event: {
+        currentTime: number;
+        duration: number;
+    }): void {
+        const playback = this.inlinePlayback();
+        if (!playback?.contentInfo) return;
+
+        const now = Date.now();
+        if (now - this.lastInlineSaveTime <= 15000) return;
+
+        this.lastInlineSaveTime = now;
+        const position: PlaybackPositionData = {
+            ...playback.contentInfo,
+            positionSeconds: Math.floor(event.currentTime),
+            durationSeconds: Math.floor(event.duration),
+        };
+
+        void this.dataSource.savePlaybackPosition(
+            playback.contentInfo.playlistId,
+            position
+        );
+
+        const key = `vod_${position.contentXtreamId}`;
+        const updated = new Map(this.stalkerPositions());
+        updated.set(key, position);
+        this.stalkerPositions.set(updated);
+    }
+
+    closeInlinePlayer(): void {
+        this.inlinePlayback.set(null);
+        this.lastInlineSaveTime = 0;
+    }
+
+    showCopyNotification(): void {
+        this.snackBar.open(
+            this.translateService.instant('PORTALS.STREAM_URL_COPIED'),
+            null,
+            {
+                duration: 2000,
+            }
+        );
     }
 
     /** Handle download from vod-details component */
@@ -612,6 +699,48 @@ export class CategoryContentViewComponent implements OnInit, OnDestroy {
     }
 
     ngOnDestroy(): void {
+        this.closeInlinePlayer();
         this.unsubscribePositionUpdates?.();
+    }
+
+    private async startStalkerVodPlayback(
+        cmd?: string,
+        title?: string,
+        thumbnail?: string,
+        startTime?: number
+    ): Promise<void> {
+        try {
+            const stalkerStore = this.store as InstanceType<
+                typeof StalkerStore
+            >;
+            const playback = await stalkerStore.resolveVodPlayback(
+                cmd,
+                title,
+                thumbnail,
+                undefined,
+                undefined,
+                startTime
+            );
+
+            this.lastInlineSaveTime = 0;
+            if (this.playerService.isEmbeddedPlayer()) {
+                this.inlinePlayback.set(playback);
+                return;
+            }
+
+            this.closeInlinePlayer();
+            void this.playerService.openResolvedPlayback(playback, true);
+        } catch (error) {
+            this.logger.error('Failed to start inline VOD playback', error);
+            const errorMessage =
+                error instanceof Error && error.message === 'nothing_to_play'
+                    ? this.translateService.instant(
+                          'PORTALS.CONTENT_NOT_AVAILABLE'
+                      )
+                    : this.translateService.instant('PORTALS.PLAYBACK_ERROR');
+            this.snackBar.open(errorMessage, null, {
+                duration: 3000,
+            });
+        }
     }
 }

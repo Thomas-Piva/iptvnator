@@ -1,4 +1,5 @@
 import 'jest-extended';
+import { ExternalPlayerSession } from './libs/shared/interfaces/src/lib/external-player-session.interface';
 import { Playlist } from './libs/shared/interfaces/src/lib/playlist.interface';
 
 declare module 'video.js' {
@@ -33,23 +34,25 @@ declare global {
             openInMpv: (
                 url: string,
                 title: string,
+                thumbnail: string,
                 userAgent: string,
                 referer?: string,
                 origin?: string,
                 contentInfo?: any,
                 startTime?: number,
                 headers?: Record<string, string>
-            ) => void;
+            ) => Promise<ExternalPlayerSession>;
             openInVlc: (
                 url: string,
                 title: string,
+                thumbnail: string,
                 userAgent: string,
                 referer?: string,
                 origin?: string,
                 contentInfo?: any,
                 startTime?: number,
                 headers?: Record<string, string>
-            ) => void;
+            ) => Promise<ExternalPlayerSession>;
             autoUpdatePlaylists: (playlists: Playlist[]) => Promise<Playlist[]>;
             fetchEpg: (
                 urls: string[]
@@ -72,6 +75,10 @@ declare global {
                 searchTerm: string,
                 limit?: number
             ) => Promise<any[]>;
+            getNowPlayingPrograms: (options?: {
+                category?: string;
+                limit?: number;
+            }) => Promise<any[]>;
             updateSettings: (settings: any) => Promise<void>;
             getAiSettings: () => Promise<{
                 aiProvider: string;
@@ -80,6 +87,12 @@ declare global {
             }>;
             setMpvPlayerPath: (mpvPlayerPath: string) => Promise<void>;
             setVlcPlayerPath: (vlcPlayerPath: string) => Promise<void>;
+            onExternalPlayerSessionUpdate?: (
+                callback: (data: ExternalPlayerSession) => void
+            ) => () => void;
+            closeExternalPlayerSession: (
+                sessionId: string
+            ) => Promise<ExternalPlayerSession | null>;
             stalkerRequest: (payload: {
                 url: string;
                 macAddress: string;
@@ -189,6 +202,9 @@ declare global {
             ) => Promise<boolean>;
             dbGetFavorites: (playlistId: string) => Promise<any[]>;
             dbGetGlobalFavorites: () => Promise<any[]>;
+            dbReorderGlobalFavorites: (
+                updates: { content_id: number; position: number }[]
+            ) => Promise<{ success: boolean }>;
             // Recently viewed (playlist-specific)
             dbGetRecentItems: (playlistId: string) => Promise<any[]>;
             dbAddRecentItem: (
@@ -256,7 +272,9 @@ declare global {
                 }) => void
             ) => void;
             // DB save content progress listener
-            onDbSaveContentProgress: (callback: (count: number) => void) => void;
+            onDbSaveContentProgress: (
+                callback: (count: number) => void
+            ) => void;
             removeDbSaveContentProgress: () => void;
             dbDeleteAllPlaylists: () => Promise<{ success: boolean }>;
             // Playback positions
@@ -277,15 +295,15 @@ declare global {
                 playlistId: string,
                 limit?: number
             ) => Promise<any[]>;
-            dbGetAllPlaybackPositions: (
-                playlistId: string
-            ) => Promise<any[]>;
+            dbGetAllPlaybackPositions: (playlistId: string) => Promise<any[]>;
             dbClearPlaybackPosition: (
                 playlistId: string,
                 contentXtreamId: number,
                 contentType: 'vod' | 'episode'
             ) => Promise<{ success: boolean }>;
-            onPlaybackPositionUpdate: (callback: (data: any) => void) => () => void;
+            onPlaybackPositionUpdate: (
+                callback: (data: any) => void
+            ) => () => void;
             // Downloads
             downloadsStart: (data: {
                 playlistId: string;
@@ -305,7 +323,12 @@ declare global {
                 episodeNumber?: number;
                 // Playlist info for auto-creation if needed
                 playlistName?: string;
-                playlistType?: 'xtream' | 'stalker' | 'm3u-file' | 'm3u-text' | 'm3u-url';
+                playlistType?:
+                    | 'xtream'
+                    | 'stalker'
+                    | 'm3u-file'
+                    | 'm3u-text'
+                    | 'm3u-url';
                 serverUrl?: string;
                 portalUrl?: string;
                 macAddress?: string;

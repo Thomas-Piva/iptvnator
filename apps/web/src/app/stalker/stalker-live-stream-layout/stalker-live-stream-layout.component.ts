@@ -25,35 +25,35 @@ import {
     PlaylistSwitcherComponent,
     ResizableDirective,
 } from 'components';
+import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 import { PlaylistsService, StalkerSessionService } from 'services';
-import { EpgItem, EpgProgram, PlaylistMeta } from 'shared-interfaces';
+import { EpgItem, EpgProgram } from 'shared-interfaces';
 import { EpgViewComponent, WebPlayerViewComponent } from 'shared-portals';
-import { SettingsStore } from '../../services/settings-store.service';
 import { PlayerService } from '../../services/player.service';
+import { SettingsStore } from '../../services/settings-store.service';
+import { CategoryViewComponent } from '../../shared/components/category-view/category-view.component';
+import { PlaylistErrorViewComponent } from '../../shared/components/playlist-error-view/playlist-error-view.component';
+import { PortalEmptyStateComponent } from '../../shared/components/portal-empty-state/portal-empty-state.component';
+import { isWorkspaceLayoutRoute } from '../../shared/navigation/portal-route.utils';
 import {
     getAdjacentChannelItem,
     getChannelItemByNumber,
 } from '../../shared/services/remote-channel-navigation.util';
-import { CategoryViewComponent } from '../../xtream-electron/category-view/category-view.component';
-import { PlaylistErrorViewComponent } from '../../xtream-electron/playlist-error-view/playlist-error-view.component';
-import { StalkerStore } from '../stalker.store';
-import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 import { createLogger } from '../../shared/utils/logger';
 import {
     StalkerCategoryItem,
     StalkerFavoriteItem,
     StalkerItvChannel,
 } from '../models';
-import {
-    normalizeStalkerEntityId,
-} from '../stalker-vod.utils';
+import { normalizeStalkerEntityId } from '../stalker-vod.utils';
+import { StalkerStore } from '../stalker.store';
 
 @Component({
     selector: 'app-stalker-live-stream-layout',
     templateUrl: './stalker-live-stream-layout.component.html',
     styleUrls: [
         './stalker-live-stream-layout.component.scss',
-        '../../xtream-electron/sidebar.scss',
+        '../../shared/styles/portal-sidebar.scss',
     ],
     imports: [
         CategoryViewComponent,
@@ -69,6 +69,7 @@ import {
         NgxSkeletonLoaderModule,
         PlaylistErrorViewComponent,
         PlaylistSwitcherComponent,
+        PortalEmptyStateComponent,
         ResizableDirective,
         TranslatePipe,
         WebPlayerViewComponent,
@@ -85,9 +86,6 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
     private readonly snackBar = inject(MatSnackBar);
     private readonly translate = inject(TranslateService);
     private readonly logger = createLogger('StalkerLiveStream');
-    private readonly stalkerMagUserAgent =
-        'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG250';
-    private readonly stalkerStreamUserAgent = 'KSPlayer';
 
     /** Categories */
     readonly categories = this.stalkerStore.getCategoryResource;
@@ -95,8 +93,7 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
     readonly isCategoryFailed = this.stalkerStore.isCategoryResourceFailed;
     readonly selectedCategoryTitle = this.stalkerStore.getSelectedCategoryName;
     readonly currentPlaylist = this.stalkerStore.currentPlaylist;
-    readonly isWorkspaceLayout =
-        this.route.snapshot.data['layout'] === 'workspace';
+    readonly isWorkspaceLayout = isWorkspaceLayoutRoute(this.route);
 
     /** Channels */
     readonly itvChannels = this.stalkerStore.itvChannels;
@@ -144,7 +141,10 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
             .subscribe((favs) => {
                 favs.forEach((fav: StalkerFavoriteItem) => {
                     if (fav.id !== undefined) {
-                        this.favorites.set(normalizeStalkerEntityId(fav.id), true);
+                        this.favorites.set(
+                            normalizeStalkerEntityId(fav.id),
+                            true
+                        );
                     }
                 });
             });
@@ -178,7 +178,8 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
         // Debounced server-side search
         effect(() => {
             const search = this.searchString();
-            if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
+            if (this.searchDebounceTimer)
+                clearTimeout(this.searchDebounceTimer);
             this.searchDebounceTimer = setTimeout(() => {
                 this.stalkerStore.setItvChannels([]);
                 this.stalkerStore.setSearchPhrase(search);
@@ -222,11 +223,11 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
         });
 
         if (window.electron?.onChannelChange) {
-            const unsubscribe = window.electron.onChannelChange((data: {
-                direction: 'up' | 'down';
-            }) => {
-                this.handleRemoteChannelChange(data.direction);
-            });
+            const unsubscribe = window.electron.onChannelChange(
+                (data: { direction: 'up' | 'down' }) => {
+                    this.handleRemoteChannelChange(data.direction);
+                }
+            );
             if (typeof unsubscribe === 'function') {
                 this.unsubscribeRemoteChannelChange = unsubscribe;
             }
@@ -265,8 +266,7 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
 
     isSelectedChannel(item: StalkerItvChannel): boolean {
         return (
-            this.selectedChannelId() ===
-            this.normalizeStalkerEntityId(item.id)
+            this.selectedChannelId() === this.normalizeStalkerEntityId(item.id)
         );
     }
 
@@ -279,57 +279,15 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
             this.player() === 'artplayer';
 
         try {
-            const url = await this.stalkerStore.fetchLinkToPlay(
-                this.currentPlaylist().portalUrl,
-                this.currentPlaylist().macAddress,
-                item.cmd
-            );
+            const playback = await this.stalkerStore.resolveItvPlayback(item);
 
             this.loadEpgForChannel(item.id);
 
             if (isEmbeddedPlayer) {
-                this.streamUrl = url;
+                this.streamUrl = playback.streamUrl;
             } else {
-                const playlist = this.currentPlaylist();
-                const portalOrigin = this.getPortalOrigin(playlist);
-                const crossOriginStream = this.isCrossOriginStream(
-                    playlist,
-                    url
-                );
-                const playbackHeaders =
-                    this.buildExternalPlaybackHeaders(playlist, url);
-                const playbackUserAgent =
-                    playbackHeaders['User-Agent'] ||
-                    playlist?.userAgent ||
-                    this.stalkerMagUserAgent;
-                const playbackReferer = crossOriginStream
-                    ? undefined
-                    : playlist?.referrer || portalOrigin;
-                const playbackOrigin = crossOriginStream
-                    ? undefined
-                    : playlist?.origin || portalOrigin;
-                this.playerService.openPlayer(
-                    url,
-                    item.o_name || item.name,
-                    item.logo,
-                    true,
-                    true,
-                    playbackUserAgent,
-                    playbackReferer,
-                    playbackOrigin,
-                    undefined,
-                    undefined,
-                    playbackHeaders
-                );
+                void this.playerService.openResolvedPlayback(playback, true);
             }
-
-            // Add to recently viewed
-            this.stalkerStore.addToRecentlyViewed({
-                ...item,
-                id: item.id,
-                cover: item.logo,
-                title: item.o_name || item.name,
-            });
         } catch (error) {
             this.logger.error('Playback failed', error);
             const errorMessage =
@@ -433,10 +391,7 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
 
     private async loadSingleEpgPreview(channelId: number | string) {
         try {
-            const items = await this.stalkerStore.fetchChannelEpg(
-                channelId,
-                1
-            );
+            const items = await this.stalkerStore.fetchChannelEpg(channelId, 1);
             if (items.length > 0) {
                 const program = items[0];
                 const id = normalizeStalkerEntityId(channelId);
@@ -450,8 +405,7 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
                 const end = parseInt(program.stop_timestamp, 10);
 
                 if (start && end && now >= start && now <= end) {
-                    const progress =
-                        ((now - start) / (end - start)) * 100;
+                    const progress = ((now - start) / (end - start)) * 100;
                     this.currentProgramsProgress.set(id, progress);
                 } else {
                     this.currentProgramsProgress.delete(id);
@@ -508,91 +462,6 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
         }
     }
 
-    private getPortalOrigin(
-        playlist: PlaylistMeta | undefined | null
-    ): string | undefined {
-        const portalUrl = playlist?.portalUrl;
-        if (!portalUrl) return undefined;
-        try {
-            return new URL(portalUrl).origin;
-        } catch {
-            return undefined;
-        }
-    }
-
-    private buildExternalPlaybackHeaders(
-        playlist: PlaylistMeta | undefined | null,
-        streamUrl?: string
-    ): Record<string, string> {
-        if (!playlist?.macAddress) {
-            return {};
-        }
-
-        if (this.isCrossOriginStream(playlist, streamUrl)) {
-            return {
-                'User-Agent': this.stalkerStreamUserAgent,
-                Accept: '*/*',
-                Range: 'bytes=0-',
-                Connection: 'keep-alive',
-                'Icy-MetaData': '1',
-            };
-        }
-
-        const cookieParts = [
-            `mac=${playlist.macAddress}`,
-            'stb_lang=en_US@rg=dezzzz',
-            'timezone=Europe/Berlin',
-        ];
-        if (playlist.stalkerSerialNumber) {
-            cookieParts.push(
-                `__cfduid=${playlist.stalkerSerialNumber.toLowerCase()}e030245495acd6ebfc1`
-            );
-        }
-
-        const headers: Record<string, string> = {
-            Cookie: cookieParts.join('; '),
-            'X-User-Agent': this.stalkerMagUserAgent,
-            SN: playlist.stalkerSerialNumber || '',
-        };
-
-        const token = this.stalkerSession.getCachedToken(playlist._id);
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
-
-        const origin = this.getPortalOrigin(playlist);
-        if (origin) {
-            headers['Origin'] = origin;
-            headers['Referer'] = origin;
-        }
-
-        return Object.entries(headers).reduce<Record<string, string>>(
-            (acc, [name, value]) => {
-                if (value?.trim()) {
-                    acc[name] = value;
-                }
-                return acc;
-            },
-            {}
-        );
-    }
-
-    private isCrossOriginStream(
-        playlist: PlaylistMeta | undefined | null,
-        streamUrl?: string
-    ): boolean {
-        const portalOrigin = this.getPortalOrigin(playlist);
-        if (!portalOrigin || !streamUrl) {
-            return false;
-        }
-
-        try {
-            return new URL(streamUrl).origin !== portalOrigin;
-        } catch {
-            return false;
-        }
-    }
-
     private toPreviewProgram(
         item: EpgItem,
         channelId: string | number
@@ -640,7 +509,10 @@ export class StalkerLiveStreamLayoutComponent implements OnDestroy {
             return;
         }
 
-        const channel = getChannelItemByNumber(this.itvChannels(), command.number);
+        const channel = getChannelItemByNumber(
+            this.itvChannels(),
+            command.number
+        );
         if (!channel) {
             return;
         }

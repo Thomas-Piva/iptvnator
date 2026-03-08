@@ -4,15 +4,17 @@ interface NodeModule {
     id: string;
 }
 
+import { ExternalPlayerSession, PortalDebugEvent } from 'shared-interfaces';
+
 declare global {
     interface Window {
         electron: {
+            onPortalDebugEvent?: (
+                callback: (data: PortalDebugEvent) => void
+            ) => () => void;
             getAppVersion: () => Promise<string>;
             platform: string;
-            fetchPlaylistByUrl: (
-                url: string,
-                title?: string
-            ) => Promise<any>;
+            fetchPlaylistByUrl: (url: string, title?: string) => Promise<any>;
             updatePlaylistFromFilePath: (
                 filePath: string,
                 title: string
@@ -30,27 +32,33 @@ declare global {
             openInMpv: (
                 url: string,
                 title: string,
+                thumbnail: string,
                 userAgent: string,
                 referer?: string,
                 origin?: string,
                 contentInfo?: any,
                 startTime?: number,
                 headers?: Record<string, string>
-            ) => void;
+            ) => Promise<ExternalPlayerSession>;
             openInVlc: (
                 url: string,
                 title: string,
+                thumbnail: string,
                 userAgent: string,
                 referer?: string,
                 origin?: string,
                 contentInfo?: any,
                 startTime?: number,
                 headers?: Record<string, string>
-            ) => void;
+            ) => Promise<ExternalPlayerSession>;
             autoUpdatePlaylists: (playlists: any[]) => Promise<any[]>;
             fetchEpg: (
                 urls: string[]
-            ) => Promise<{ success: boolean; message?: string; skipped?: string[] }>;
+            ) => Promise<{
+                success: boolean;
+                message?: string;
+                skipped?: string[];
+            }>;
             getChannelPrograms: (channelId: string) => Promise<any>;
             getEpgChannels: () => Promise<any>;
             getEpgChannelsByRange: (
@@ -83,10 +91,12 @@ declare global {
                 params: Record<string, string>;
                 token?: string;
                 serialNumber?: string;
+                requestId?: string;
             }) => Promise<any>;
             xtreamRequest: (payload: {
                 url: string;
                 params: Record<string, string>;
+                requestId?: string;
             }) => Promise<{ payload: any; action: string }>;
             // Database operations
             dbCreatePlaylist: (playlist: any) => Promise<{ success: boolean }>;
@@ -186,6 +196,9 @@ declare global {
             ) => Promise<boolean>;
             dbGetFavorites: (playlistId: string) => Promise<any[]>;
             dbGetGlobalFavorites: () => Promise<any[]>;
+            dbReorderGlobalFavorites: (
+                updates: { content_id: number; position: number }[]
+            ) => Promise<{ success: boolean }>;
             // Recently viewed (playlist-specific)
             dbGetRecentItems: (playlistId: string) => Promise<any[]>;
             dbAddRecentItem: (
@@ -242,6 +255,9 @@ declare global {
                     originalError: string;
                 }) => void
             ) => void;
+            onExternalPlayerSessionUpdate?: (
+                callback: (data: ExternalPlayerSession) => void
+            ) => () => void;
             getLocalIpAddresses: () => Promise<string[]>;
             // EPG progress listener
             onEpgProgress?: (
@@ -253,7 +269,9 @@ declare global {
                 }) => void
             ) => void;
             // DB save content progress listener
-            onDbSaveContentProgress: (callback: (count: number) => void) => void;
+            onDbSaveContentProgress: (
+                callback: (count: number) => void
+            ) => void;
             removeDbSaveContentProgress: () => void;
             dbDeleteAllPlaylists: () => Promise<{ success: boolean }>;
             // Playback positions
@@ -284,15 +302,18 @@ declare global {
                 playlistId: string,
                 limit?: number
             ) => Promise<any[]>;
-            dbGetAllPlaybackPositions: (
-                playlistId: string
-            ) => Promise<any[]>;
+            dbGetAllPlaybackPositions: (playlistId: string) => Promise<any[]>;
             dbClearPlaybackPosition: (
                 playlistId: string,
                 contentXtreamId: number,
                 contentType: 'vod' | 'episode'
             ) => Promise<{ success: boolean }>;
-            onPlaybackPositionUpdate: (callback: (data: any) => void) => () => void;
+            onPlaybackPositionUpdate: (
+                callback: (data: any) => void
+            ) => () => void;
+            closeExternalPlayerSession: (
+                sessionId: string
+            ) => Promise<ExternalPlayerSession | null>;
             // Downloads
             downloadsStart: (data: {
                 playlistId: string;
@@ -312,7 +333,12 @@ declare global {
                 episodeNumber?: number;
                 // Playlist info for auto-creation if needed
                 playlistName?: string;
-                playlistType?: 'xtream' | 'stalker' | 'm3u-file' | 'm3u-text' | 'm3u-url';
+                playlistType?:
+                    | 'xtream'
+                    | 'stalker'
+                    | 'm3u-file'
+                    | 'm3u-text'
+                    | 'm3u-url';
                 serverUrl?: string;
                 portalUrl?: string;
                 macAddress?: string;

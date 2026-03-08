@@ -1,16 +1,27 @@
 import { inject } from '@angular/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { signalStoreFeature, withMethods } from '@ngrx/signals';
+import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
+import { PlaylistActions } from 'm3u-state';
 import { DataService, PlaylistsService, StalkerSessionService } from 'services';
 import {
     Playlist,
+    PlaylistMeta,
+    ResolvedPortalPlayback,
     STALKER_REQUEST,
     StalkerPortalActions,
+    StalkerPortalItem,
 } from 'shared-interfaces';
 import { PlayerService } from '../../../services/player.service';
 import { createLogger } from '../../../shared/utils/logger';
 import { StalkerContentTypes } from '../../stalker-content-types';
+import {
+    buildStalkerExternalPlaybackHeaders,
+    getStalkerPortalOrigin,
+    isCrossOriginStalkerStream,
+    STALKER_MAG_USER_AGENT,
+} from '../../stalker-live-playback.utils';
 import {
     normalizeStalkerEntityId,
     normalizeStalkerEntityIdAsNumber,
@@ -18,8 +29,7 @@ import {
 
 type StalkerContentType = 'itv' | 'vod' | 'series';
 
-interface StalkerPlayableItem extends Record<string, unknown> {
-    id?: string | number;
+interface StalkerPlayableItem extends StalkerPortalItem {
     cmd?: string;
     has_files?: unknown;
 }
@@ -56,14 +66,16 @@ export function withStalkerPlayer() {
                 playerService = inject(PlayerService),
                 stalkerSession = inject(StalkerSessionService),
                 snackBar = inject(MatSnackBar),
-                translate = inject(TranslateService)
+                translate = inject(TranslateService),
+                ngrxStore = inject(Store)
             ) => {
                 const storeState = store as unknown as StalkerPlayerStoreLike;
                 const fetchLinkToPlayInternal = async (
                     portalUrl: string,
                     macAddress: string,
                     cmd: string,
-                    series?: number
+                    series?: number,
+                    forcedContentType?: StalkerContentType
                 ) => {
                     const normalizeCmdValue = (value: string): string => {
                         const trimmed = String(value ?? '').trim();
@@ -73,9 +85,7 @@ export function withStalkerPlayer() {
                         // "ffmpeg http://...", "ffrt http://...", etc.
                         const splitAt = trimmed.indexOf(' ');
                         if (splitAt > 0) {
-                            const candidate = trimmed
-                                .slice(splitAt + 1)
-                                .trim();
+                            const candidate = trimmed.slice(splitAt + 1).trim();
                             if (
                                 candidate.startsWith('http://') ||
                                 candidate.startsWith('https://') ||
@@ -90,7 +100,7 @@ export function withStalkerPlayer() {
                     };
 
                     const selectedContentType =
-                        storeState.selectedContentType();
+                        forcedContentType ?? storeState.selectedContentType();
                     const type = series ? 'vod' : selectedContentType;
 
                     // Always use create_link to get the tokenized streaming URL
@@ -234,6 +244,148 @@ export function withStalkerPlayer() {
                     return null;
                 };
 
+                const resolveVodPlaybackInternal = async (
+                    cmd?: string,
+                    title?: string,
+                    thumbnail?: string,
+                    episodeNum?: number,
+                    episodeId?: number,
+                    startTime?: number
+                ): Promise<ResolvedPortalPlayback> => {
+                    const item = storeState.selectedItem();
+                    let cmdToUse = cmd ?? item?.cmd;
+
+                    if (!cmdToUse) {
+                        throw new Error('nothing_to_play');
+                    }
+
+                    // For items with has_files and relative path, we need to fetch the file id first
+                    if (
+                        item?.has_files !== undefined &&
+                        cmdToUse &&
+                        !cmdToUse.includes('://') &&
+                        cmdToUse.includes('/media/') &&
+                        !cmdToUse.includes('/media/file_')
+                    ) {
+                        const fileId = await fetchMovieFileIdInternal(
+                            normalizeStalkerEntityId(item.id)
+                        );
+                        if (fileId) {
+                            cmdToUse = `/media/file_${fileId}.mpg`;
+                        }
+                    }
+
+                    const playlist = storeState.currentPlaylist();
+                    if (!playlist) {
+                        throw new Error('nothing_to_play');
+                    }
+
+                    const streamUrl = await fetchLinkToPlayInternal(
+                        playlist.portalUrl,
+                        playlist.macAddress,
+                        cmdToUse,
+                        episodeNum
+                    );
+
+                    if (typeof storeState.addToRecentlyViewed === 'function') {
+                        storeState.addToRecentlyViewed({
+                            ...item,
+                            id: item?.id,
+                            cmd: cmd,
+                            cover: thumbnail,
+                            title,
+                        });
+                    } else {
+                        addToRecentlyViewedInternal(
+                            item,
+                            cmd,
+                            thumbnail,
+                            title
+                        );
+                    }
+
+                    const isEpisode =
+                        episodeNum !== undefined || episodeId !== undefined;
+                    const selectedItemId =
+                        normalizeStalkerEntityIdAsNumber(item?.id) ?? 0;
+
+                    return {
+                        streamUrl,
+                        title: title ?? '',
+                        thumbnail,
+                        startTime,
+                        userAgent: playlist.userAgent,
+                        referer: playlist.referrer,
+                        origin: playlist.origin,
+                        contentInfo: {
+                            playlistId: playlist._id,
+                            // For episodes, use episodeId if provided, otherwise fall back to item.id
+                            contentXtreamId:
+                                isEpisode && episodeId
+                                    ? episodeId
+                                    : selectedItemId,
+                            contentType: isEpisode ? 'episode' : 'vod',
+                            seriesXtreamId: isEpisode
+                                ? selectedItemId
+                                : undefined,
+                        },
+                    };
+                };
+
+                const resolveItvPlaybackInternal = async (
+                    item: StalkerPlayableItem
+                ): Promise<ResolvedPortalPlayback> => {
+                    const playlist = storeState.currentPlaylist();
+                    if (!playlist || !item?.cmd) {
+                        throw new Error('nothing_to_play');
+                    }
+
+                    const streamUrl = await fetchLinkToPlayInternal(
+                        playlist.portalUrl,
+                        playlist.macAddress,
+                        item.cmd,
+                        undefined,
+                        'itv'
+                    );
+                    const token = stalkerSession.getCachedToken(playlist._id);
+                    const headers = buildStalkerExternalPlaybackHeaders(
+                        playlist,
+                        token,
+                        streamUrl
+                    );
+                    const crossOriginStream = isCrossOriginStalkerStream(
+                        playlist,
+                        streamUrl
+                    );
+                    const portalOrigin = getStalkerPortalOrigin(playlist);
+
+                    if (typeof storeState.addToRecentlyViewed === 'function') {
+                        storeState.addToRecentlyViewed({
+                            ...item,
+                            id: item.id,
+                            cover: item.logo ?? item.cover,
+                            title: item.o_name || item.name || item.title,
+                        });
+                    }
+
+                    return {
+                        streamUrl,
+                        title: item.o_name || item.name || item.title || '',
+                        thumbnail: item.logo ?? item.cover ?? null,
+                        headers,
+                        userAgent:
+                            headers['User-Agent'] ||
+                            playlist.userAgent ||
+                            STALKER_MAG_USER_AGENT,
+                        referer: crossOriginStream
+                            ? undefined
+                            : playlist.referrer || portalOrigin,
+                        origin: crossOriginStream
+                            ? undefined
+                            : playlist.origin || portalOrigin,
+                    };
+                };
+
                 const addToRecentlyViewedInternal = (
                     item: StalkerPlayableItem,
                     cmd?: string,
@@ -256,7 +408,17 @@ export function withStalkerPlayer() {
                     };
                     playlistService
                         .addPortalRecentlyViewed(playlistId, recentlyViewedItem)
-                        .subscribe();
+                        .subscribe((updatedPlaylist) => {
+                            ngrxStore.dispatch(
+                                PlaylistActions.updatePlaylistMeta({
+                                    playlist: {
+                                        _id: playlistId,
+                                        recentlyViewed:
+                                            updatedPlaylist?.recentlyViewed,
+                                    } as PlaylistMeta,
+                                })
+                            );
+                        });
                 };
 
                 return {
@@ -346,6 +508,28 @@ export function withStalkerPlayer() {
                     ): Promise<string | null> {
                         return fetchMovieFileIdInternal(movieId);
                     },
+                    async resolveVodPlayback(
+                        cmd?: string,
+                        title?: string,
+                        thumbnail?: string,
+                        episodeNum?: number,
+                        episodeId?: number,
+                        startTime?: number
+                    ): Promise<ResolvedPortalPlayback> {
+                        return resolveVodPlaybackInternal(
+                            cmd,
+                            title,
+                            thumbnail,
+                            episodeNum,
+                            episodeId,
+                            startTime
+                        );
+                    },
+                    async resolveItvPlayback(
+                        item: StalkerPlayableItem
+                    ): Promise<ResolvedPortalPlayback> {
+                        return resolveItvPlaybackInternal(item);
+                    },
                     /**
                      * Play VOD or episode content
                      * @param cmd The media command/path
@@ -364,88 +548,18 @@ export function withStalkerPlayer() {
                         startTime?: number
                     ) {
                         try {
-                            const item = storeState.selectedItem();
-                            let cmdToUse = cmd ?? item?.cmd;
-
-                            if (!cmdToUse) {
-                                throw new Error('nothing_to_play');
-                            }
-
-                            // For items with has_files and relative path, we need to fetch the file id first
-                            if (
-                                item?.has_files !== undefined &&
-                                cmdToUse &&
-                                !cmdToUse.includes('://') &&
-                                cmdToUse.includes('/media/') &&
-                                !cmdToUse.includes('/media/file_')
-                            ) {
-                                const fileId = await fetchMovieFileIdInternal(
-                                    normalizeStalkerEntityId(item.id)
-                                );
-                                if (fileId) {
-                                    cmdToUse = `/media/file_${fileId}.mpg`;
-                                }
-                            }
-
-                            const playlist = storeState.currentPlaylist();
-                            if (!playlist) {
-                                throw new Error('nothing_to_play');
-                            }
-                            const url = await fetchLinkToPlayInternal(
-                                playlist.portalUrl,
-                                playlist.macAddress,
-                                cmdToUse,
-                                episodeNum
-                            );
-                            if (
-                                typeof storeState.addToRecentlyViewed ===
-                                'function'
-                            ) {
-                                storeState.addToRecentlyViewed({
-                                    ...item,
-                                    id: item?.id,
-                                    cmd: cmd,
-                                    cover: thumbnail,
-                                    title,
-                                });
-                            } else {
-                                addToRecentlyViewedInternal(
-                                    item,
-                                    cmd,
-                                    thumbnail,
-                                    title
-                                );
-                            }
-
-                            const isEpisode =
-                                episodeNum !== undefined ||
-                                episodeId !== undefined;
-                            const selectedItemId =
-                                normalizeStalkerEntityIdAsNumber(item?.id) ?? 0;
-                            const contentInfo = {
-                                playlistId: playlist._id,
-                                // For episodes, use episodeId if provided, otherwise fall back to item.id
-                                contentXtreamId:
-                                    isEpisode && episodeId
-                                        ? episodeId
-                                        : selectedItemId,
-                                contentType: isEpisode ? 'episode' : 'vod',
-                                seriesXtreamId: isEpisode
-                                    ? selectedItemId
-                                    : undefined,
-                            };
-
-                            playerService.openPlayer(
-                                url,
+                            const playback = await resolveVodPlaybackInternal(
+                                cmd,
                                 title,
                                 thumbnail,
-                                true,
-                                false,
-                                playlist?.userAgent,
-                                playlist?.referrer,
-                                playlist?.origin,
-                                contentInfo,
+                                episodeNum,
+                                episodeId,
                                 startTime
+                            );
+
+                            void playerService.openResolvedPlayback(
+                                playback,
+                                true
                             );
                         } catch (error) {
                             logger.error('Failed to get playback URL', error);

@@ -7,12 +7,16 @@ import {
     output,
     signal,
 } from '@angular/core';
-import { TranslatePipe } from '@ngx-translate/core';
+import { MatSnackBar } from '@angular/material/snack-bar';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { FavoritesButtonComponent } from '../favorites-button/favorites-button.component';
 import { ContentHeroComponent } from 'components';
 import { StalkerStore } from '../stalker.store';
 import { SeasonContainerComponent } from '../../xtream-electron/season-container/season-container.component';
-import { XtreamSerieEpisode } from 'shared-interfaces';
+import {
+    ResolvedPortalPlayback,
+    XtreamSerieEpisode,
+} from 'shared-interfaces';
 import { XtreamStore } from '../../xtream-electron/stores/xtream.store';
 import { createLogger } from '../../shared/utils/logger';
 import {
@@ -28,6 +32,9 @@ import {
 } from '../stalker-series.adapters';
 import { StalkerSelectedVodItem, StalkerVodSource } from '../models';
 import { normalizeStalkerVodDetailsItem } from '../stalker-vod.utils';
+import { PlayerService } from '../../services/player.service';
+import { ExternalPlaybackService } from '../../services/external-playback.service';
+import { PortalInlinePlayerComponent } from '../../shared/components/portal-inline-player/portal-inline-player.component';
 
 /**
  * Component for displaying series/episodes for Stalker portal content.
@@ -43,6 +50,7 @@ import { normalizeStalkerVodDetailsItem } from '../stalker-vod.utils';
     imports: [
         FavoritesButtonComponent,
         ContentHeroComponent,
+        PortalInlinePlayerComponent,
         TranslatePipe,
         SeasonContainerComponent,
     ],
@@ -50,8 +58,16 @@ import { normalizeStalkerVodDetailsItem } from '../stalker-vod.utils';
 export class StalkerSeriesViewComponent {
     readonly stalkerStore = inject(StalkerStore);
     private readonly xtreamStore = inject(XtreamStore);
+    private readonly playerService = inject(PlayerService);
+    private readonly externalPlayback = inject(ExternalPlaybackService);
+    private readonly snackBar = inject(MatSnackBar);
+    private readonly translateService = inject(TranslateService);
     readonly backClicked = output<void>();
     private readonly logger = createLogger('StalkerSeriesView');
+    readonly inlinePlayback = signal<ResolvedPortalPlayback | null>(null);
+    private lastSaveTime = 0;
+    readonly openingEpisodeId = signal<number | null>(null);
+    readonly activeEpisodeId = signal<number | null>(null);
 
     /**
      * Optional input for VOD items with embedded series array (vclub mode)
@@ -123,6 +139,41 @@ export class StalkerSeriesViewComponent {
                     );
                 }
             }
+        });
+
+        effect(() => {
+            const session = this.externalPlayback.activeSession();
+            const item = this.displayItem();
+            const playlistId = this.stalkerStore.currentPlaylist()?._id;
+            const seriesId = item ? this.toSeriesId(item.id) : 0;
+
+            if (
+                !session?.contentInfo ||
+                !playlistId ||
+                !seriesId ||
+                session.contentInfo.contentType !== 'episode' ||
+                session.contentInfo.playlistId !== playlistId ||
+                session.contentInfo.seriesXtreamId !== seriesId
+            ) {
+                this.openingEpisodeId.set(null);
+                this.activeEpisodeId.set(null);
+                return;
+            }
+
+            if (session.status === 'launching') {
+                this.openingEpisodeId.set(session.contentInfo.contentXtreamId);
+                this.activeEpisodeId.set(null);
+                return;
+            }
+
+            if (session.status === 'opened' || session.status === 'playing') {
+                this.openingEpisodeId.set(null);
+                this.activeEpisodeId.set(session.contentInfo.contentXtreamId);
+                return;
+            }
+
+            this.openingEpisodeId.set(null);
+            this.activeEpisodeId.set(null);
         });
     }
 
@@ -282,13 +333,12 @@ export class StalkerSeriesViewComponent {
             ? this.xtreamStore.playbackPositions().get(`episode_${trackingId}`)
             : undefined;
         const startTime = position?.positionSeconds;
-
-        this.stalkerStore.createLinkToPlayVod(
+        void this.startPlayback(
             cmd,
             item.info.name,
             item.info.movie_image,
             episodeNum,
-            trackingId, // unique episode ID for playback tracking
+            trackingId,
             startTime
         );
     }
@@ -322,18 +372,18 @@ export class StalkerSeriesViewComponent {
             .playbackPositions()
             .get(`episode_${trackingId}`);
         const startTime = position?.positionSeconds;
-
-        this.stalkerStore.createLinkToPlayVod(
+        void this.startPlayback(
             cmd,
             `${item.info.name} - ${episodeName}`,
             item.info.movie_image,
-            episode.series_number, // episode number for API
-            trackingId, // unique episode ID for playback tracking
+            episode.series_number,
+            trackingId,
             startTime
         );
     }
 
     goBack() {
+        this.closeInlinePlayer();
         this.backClicked.emit();
         this.stalkerStore.clearSelectedItem();
     }
@@ -344,5 +394,79 @@ export class StalkerSeriesViewComponent {
         const primary = raw.includes(':') ? raw.split(':')[0] : raw;
         const parsed = Number(primary);
         return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    closeInlinePlayer(): void {
+        this.inlinePlayback.set(null);
+        this.lastSaveTime = 0;
+    }
+
+    handleInlineTimeUpdate(event: {
+        currentTime: number;
+        duration: number;
+    }): void {
+        const playback = this.inlinePlayback();
+        if (!playback?.contentInfo) return;
+
+        const now = Date.now();
+        if (now - this.lastSaveTime <= 15000) return;
+
+        this.lastSaveTime = now;
+        void this.xtreamStore.savePosition(playback.contentInfo.playlistId, {
+            ...playback.contentInfo,
+            positionSeconds: Math.floor(event.currentTime),
+            durationSeconds: Math.floor(event.duration),
+        });
+    }
+
+    showCopyNotification(): void {
+        this.snackBar.open(
+            this.translateService.instant('PORTALS.STREAM_URL_COPIED'),
+            null,
+            {
+                duration: 2000,
+            }
+        );
+    }
+
+    private async startPlayback(
+        cmd?: string,
+        title?: string,
+        thumbnail?: string,
+        episodeNum?: number,
+        episodeId?: number,
+        startTime?: number
+    ): Promise<void> {
+        try {
+            const playback = await this.stalkerStore.resolveVodPlayback(
+                cmd,
+                title,
+                thumbnail,
+                episodeNum,
+                episodeId,
+                startTime
+            );
+
+            this.lastSaveTime = 0;
+            if (this.playerService.isEmbeddedPlayer()) {
+                this.inlinePlayback.set(playback);
+                return;
+            }
+
+            this.closeInlinePlayer();
+            void this.playerService.openResolvedPlayback(playback, true);
+        } catch (error) {
+            this.logger.error('Failed to start inline series playback', error);
+            const errorMessage =
+                error instanceof Error &&
+                error.message === 'nothing_to_play'
+                    ? this.translateService.instant(
+                          'PORTALS.CONTENT_NOT_AVAILABLE'
+                      )
+                    : this.translateService.instant('PORTALS.PLAYBACK_ERROR');
+            this.snackBar.open(errorMessage, null, {
+                duration: 3000,
+            });
+        }
     }
 }

@@ -3,23 +3,36 @@ import {
     computed,
     effect,
     inject,
-    OnDestroy,
     signal,
 } from '@angular/core';
-import { toSignal } from '@angular/core/rxjs-interop';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { ActivatedRoute, Router } from '@angular/router';
-import { TranslateService } from '@ngx-translate/core';
-import { map } from 'rxjs';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { PlaylistsService } from 'services';
-import { VodDetailsItem } from 'shared-interfaces';
-import { FavoritesLayoutComponent } from '../../shared/components/favorites-layout/favorites-layout.component';
+import { EpgItem, VodDetailsItem } from 'shared-interfaces';
+import { PlayerService } from '../../services/player.service';
+import { PortalCollectionLiveShellComponent } from '../../shared/components/portal-collection-live-shell/portal-collection-live-shell.component';
+import {
+    PortalCollectionMode,
+    PortalCollectionShellComponent,
+    PortalCollectionShellLayout,
+} from '../../shared/components/portal-collection-shell/portal-collection-shell.component';
+import { StalkerInlineDetailComponent } from '../../shared/components/stalker-inline-detail/stalker-inline-detail.component';
+import {
+    isWorkspaceLayoutRoute,
+    queryParamSignal,
+} from '../../shared/navigation/portal-route.utils';
+import { createPortalCollectionContext } from '../../shared/utils/portal-collection-context';
+import {
+    buildStandardCollectionCategories,
+    filterCollectionBucket,
+} from '../../shared/utils/portal-collection-items';
 import { createLogger } from '../../shared/utils/logger';
 import { FavoritesContextService } from '../../workspace/favorites-context.service';
-import { VodDetailsComponent } from '../../xtream-electron/vod-details/vod-details.component';
 import { StalkerSelectedVodItem, StalkerVodSource } from '../models';
-import { StalkerSeriesViewComponent } from '../stalker-series-view/stalker-series-view.component';
 import {
     clearStalkerDetailViewState,
+    createStalkerInlineDetailState,
     createPortalCollectionResource,
     createPortalFavoritesResource,
     createRefreshTrigger,
@@ -28,15 +41,29 @@ import {
     normalizeStalkerVodDetailsItem,
     toggleStalkerVodFavorite,
 } from '../stalker-vod.utils';
+import { StalkerCollectionChannelsListComponent } from '../stalker-collection-channels-list/stalker-collection-channels-list.component';
 import { StalkerStore } from '../stalker.store';
+
+const STALKER_RECENT_LAYOUT: Omit<
+    PortalCollectionShellLayout,
+    'showHeaderAction'
+> = {
+    titleTranslationKey: 'PORTALS.SIDEBAR.RECENT',
+    removeTooltip: 'Remove from recent',
+    emptyIcon: 'history',
+    headerActionIcon: 'delete_sweep',
+    headerActionTooltip: 'Clear recently viewed',
+};
 
 @Component({
     selector: 'app-recently-viewed',
     templateUrl: './recently-viewed.component.html',
     imports: [
-        FavoritesLayoutComponent,
-        StalkerSeriesViewComponent,
-        VodDetailsComponent,
+        PortalCollectionLiveShellComponent,
+        PortalCollectionShellComponent,
+        StalkerCollectionChannelsListComponent,
+        StalkerInlineDetailComponent,
+        TranslatePipe,
     ],
     styles: [
         `
@@ -53,7 +80,7 @@ import { StalkerStore } from '../stalker.store';
         `,
     ],
 })
-export class RecentlyViewedComponent implements OnDestroy {
+export class RecentlyViewedComponent {
     private static isCategoryType(
         value: string
     ): value is 'vod' | 'series' | 'itv' {
@@ -64,16 +91,31 @@ export class RecentlyViewedComponent implements OnDestroy {
     private readonly collectionRefresh = createRefreshTrigger();
     private readonly favoritesRefresh = createRefreshTrigger();
     private readonly stalkerStore = inject(StalkerStore);
+    private readonly playerService = inject(PlayerService);
+    private readonly snackBar = inject(MatSnackBar);
     private readonly router = inject(Router);
     private readonly translate = inject(TranslateService);
     private readonly logger = createLogger('StalkerRecentlyViewed');
     private readonly favoritesCtx = inject(FavoritesContextService);
+    private previousSelectedCategoryId: string | null = null;
 
-    itemDetails: (StalkerVodSource & { category_id?: string }) | null = null;
+    itemDetails: StalkerSelectedVodItem | null = null;
     vodDetailsItem: VodDetailsItem | null = null;
     readonly isSelectedVodFavorite = signal<boolean>(false);
+    readonly selectedLiveItem = signal<
+        (StalkerVodSource & { category_id: string }) | null
+    >(null);
+    readonly liveStreamUrl = signal('');
+    readonly epgItems = signal<EpgItem[]>([]);
+    readonly isLoadingEpg = signal(false);
+    readonly hasMoreEpg = signal(false);
+    readonly isResolvingPlayback = signal(false);
 
     readonly currentPlaylist = this.stalkerStore.currentPlaylist;
+    readonly playlistSubtitle = 'Stalker Portal';
+    readonly playlistTitle = computed(
+        () => this.currentPlaylist()?.title || 'Portal'
+    );
 
     readonly allFavorites = createPortalCollectionResource(
         this.playlistService,
@@ -88,82 +130,84 @@ export class RecentlyViewedComponent implements OnDestroy {
         () => this.favoritesRefresh.refreshVersion()
     );
 
-    readonly categories = computed(() => [
-        {
-            id: 1,
-            category_id: 'all',
-            category_name: this.translate.instant('PORTALS.ALL_CATEGORIES'),
-            count: this.allFavorites.value()?.length ?? 0,
-            parent_id: 0,
-        },
-        {
-            id: 2,
-            category_id: 'movie',
-            category_name: this.translate.instant('PORTALS.SIDEBAR.MOVIES'),
-            count: this.movies()?.length ?? 0,
-            parent_id: 0,
-        },
-        {
-            id: 3,
-            category_id: 'itv',
-            category_name: this.translate.instant('PORTALS.SIDEBAR.LIVE_TV'),
-            count: this.live()?.length ?? 0,
-            parent_id: 0,
-        },
-        {
-            id: 4,
-            category_id: 'series',
-            category_name: this.translate.instant('PORTALS.SIDEBAR.SERIES'),
-            count: this.series()?.length ?? 0,
-            parent_id: 0,
-        },
-    ]);
-
+    readonly categories = computed(() =>
+        buildStandardCollectionCategories({
+            labels: {
+                all: this.translate.instant('PORTALS.ALL_CATEGORIES'),
+                movie: this.translate.instant('PORTALS.SIDEBAR.MOVIES'),
+                live: this.translate.instant('PORTALS.SIDEBAR.LIVE_TV'),
+                series: this.translate.instant('PORTALS.SIDEBAR.SERIES'),
+            },
+            counts: {
+                all: this.allFavorites.value()?.length ?? 0,
+                movie: this.movies()?.length ?? 0,
+                live: this.live()?.length ?? 0,
+                series: this.series()?.length ?? 0,
+            },
+            includeLive: true,
+            liveCategoryId: 'itv',
+        })
+    );
+    readonly collectionContext = createPortalCollectionContext({
+        ctx: this.favoritesCtx,
+        categories: this.categories,
+    });
     readonly itemsToShow = computed(() => {
-        const term = this.searchTerm();
-        const filterByTerm = (
-            items: (StalkerVodSource & { category_id?: string })[] | undefined
-        ) => {
-            if (!items) return [];
-            if (!term) return items;
-
-            return items.filter((item) =>
-                `${item?.name ?? ''} ${item?.o_name ?? ''}`
-                    .toLowerCase()
-                    .includes(term)
-            );
-        };
-
-        switch (this.selectedCategoryId()) {
-            case 'all':
-                return filterByTerm(this.allFavorites.value());
-            case 'movie':
-                return filterByTerm(this.movies());
-            case 'itv':
-                return filterByTerm(this.live());
-            case 'series':
-                return filterByTerm(this.series());
-            default:
-                return [];
-        }
+        return filterCollectionBucket({
+            selectedCategoryId: this.selectedCategoryId(),
+            allItems: this.allFavorites.value(),
+            buckets: {
+                movie: this.movies(),
+                live: this.live(),
+                series: this.series(),
+            },
+            searchTerm: this.searchTerm(),
+            liveCategoryId: 'itv',
+            textOf: (item: any) => `${item?.name ?? ''} ${item?.o_name ?? ''}`,
+        });
     });
 
     /** Synced with workspace context service so panel clicks are reactive */
-    readonly selectedCategoryId = this.favoritesCtx.selectedCategoryId;
-    readonly isWorkspaceLayout =
-        this.route.snapshot.data['layout'] === 'workspace';
-    readonly searchTerm = toSignal(
-        this.route.queryParamMap.pipe(
-            map((params) => (params.get('q') ?? '').trim().toLowerCase())
-        ),
-        { initialValue: '' }
+    readonly selectedCategoryId = this.collectionContext.selectedCategoryId;
+    readonly isWorkspaceLayout = isWorkspaceLayoutRoute(this.route);
+    readonly layout: PortalCollectionShellLayout = {
+        ...STALKER_RECENT_LAYOUT,
+        showHeaderAction: !this.isWorkspaceLayout,
+    };
+    readonly searchTerm = queryParamSignal(this.route, 'q', (value) =>
+        (value ?? '').trim().toLowerCase()
     );
-    readonly refreshToken = toSignal(
-        this.route.queryParamMap.pipe(
-            map((params) => params.get('refresh') ?? '')
-        ),
-        { initialValue: '' }
+    readonly refreshToken = queryParamSignal(
+        this.route,
+        'refresh',
+        (value) => value ?? ''
     );
+    readonly liveItemsToShow = computed<
+        (StalkerVodSource & { category_id: string })[]
+    >(() =>
+        ((this.allFavorites.value() ?? []) as (StalkerVodSource & {
+            category_id: string;
+        })[]).filter((item) => {
+            if (item.category_id !== 'itv') {
+                return false;
+            }
+
+            const term = this.searchTerm();
+            if (!term) {
+                return true;
+            }
+
+            return `${item?.name ?? ''} ${item?.o_name ?? ''}`
+                .toLowerCase()
+                .includes(term);
+        })
+    );
+    readonly isLiveCategory = computed(() => this.selectedCategoryId() === 'itv');
+    readonly isEmbeddedPlayer = computed(() =>
+        this.playerService.isEmbeddedPlayer()
+    );
+    private epgPageSize = 10;
+    private epgChannelId: number | string | null = null;
 
     readonly series = computed(() =>
         this.allFavorites
@@ -177,15 +221,34 @@ export class RecentlyViewedComponent implements OnDestroy {
         this.allFavorites.value()?.filter((item) => item.category_id === 'itv')
     );
 
+    get mode(): PortalCollectionMode {
+        if (this.isLiveCategory()) {
+            return 'live';
+        }
+
+        return this.showDetails() ? 'detail' : 'grid';
+    }
+
     constructor() {
         effect(() => {
             this.portalFavorites.value();
             this.syncSelectedVodFavorite();
         });
 
-        // Keep workspace context panel in sync with categories
         effect(() => {
-            this.favoritesCtx.setCategories(this.categories());
+            const selectedCategoryId = this.selectedCategoryId();
+            const hasInlineDetail = this.inlineDetail().categoryId !== null;
+            const previousCategoryId = this.previousSelectedCategoryId;
+
+            this.previousSelectedCategoryId = selectedCategoryId;
+
+            if (
+                hasInlineDetail &&
+                previousCategoryId !== null &&
+                previousCategoryId !== selectedCategoryId
+            ) {
+                this.clearDetailsView();
+            }
         });
 
         effect(() => {
@@ -221,6 +284,29 @@ export class RecentlyViewedComponent implements OnDestroy {
                 // no-op
             }
         });
+
+        effect(() => {
+            const selectedItem = this.selectedLiveItem();
+            if (!selectedItem) {
+                return;
+            }
+
+            const stillExists = this.liveItemsToShow().some(
+                (item) => String(item.id ?? '') === String(selectedItem.id ?? '')
+            );
+
+            if (!stillExists) {
+                this.clearLiveSelection();
+            }
+        });
+
+        effect(() => {
+            if (this.isLiveCategory()) {
+                return;
+            }
+
+            this.clearLiveSelection();
+        });
     }
 
     removeFromRecentlyViewed(item: Pick<StalkerVodSource, 'id'>) {
@@ -245,7 +331,7 @@ export class RecentlyViewedComponent implements OnDestroy {
     }
 
     setCategoryId(categoryId: string) {
-        this.favoritesCtx.setCategoryId(categoryId);
+        this.collectionContext.setCategoryId(categoryId);
     }
 
     openItem(item: StalkerVodSource & { category_id: string }) {
@@ -256,11 +342,12 @@ export class RecentlyViewedComponent implements OnDestroy {
         this.stalkerStore.setSelectedContentType(item.category_id);
         switch (item.category_id) {
             case 'itv':
-                this.createLinkToPlayVodItv(
-                    item.cmd,
-                    item.o_name || item.name,
-                    item.logo
-                );
+                this.setCategoryId('itv');
+                const cleared = clearStalkerDetailViewState();
+                this.itemDetails = cleared.itemDetails;
+                this.vodDetailsItem = cleared.vodDetailsItem;
+                this.isSelectedVodFavorite.set(false);
+                void this.selectLiveItem(item);
                 break;
             case 'vod': {
                 // Normalize the item to ensure is_series flag is properly set
@@ -279,8 +366,8 @@ export class RecentlyViewedComponent implements OnDestroy {
                 break;
             }
             case 'series':
-                this.itemDetails = item;
-                this.stalkerStore.setSelectedItem(item);
+                this.itemDetails = this.normalizeRecentItem(item);
+                this.stalkerStore.setSelectedItem(this.itemDetails);
                 break;
             default:
                 break;
@@ -316,10 +403,54 @@ export class RecentlyViewedComponent implements OnDestroy {
 
     /** Handle back from vod-details component */
     onVodBack(): void {
-        const cleared = clearStalkerDetailViewState();
-        this.itemDetails = cleared.itemDetails;
-        this.vodDetailsItem = cleared.vodDetailsItem;
-        this.isSelectedVodFavorite.set(false);
+        this.clearDetailsView();
+    }
+
+    async selectLiveItem(item: StalkerVodSource & { category_id: string }) {
+        this.selectedLiveItem.set(item);
+        this.liveStreamUrl.set('');
+        this.stalkerStore.setSelectedContentType('itv');
+        this.stalkerStore.setSelectedItem(item as any);
+        this.isResolvingPlayback.set(true);
+
+        try {
+            const playback = await this.stalkerStore.resolveItvPlayback(
+                item as any
+            );
+            await this.loadEpgForChannel(item.id);
+            this.liveStreamUrl.set(playback.streamUrl);
+
+            if (this.isEmbeddedPlayer()) {
+            } else {
+                void this.playerService.openResolvedPlayback(playback, true);
+            }
+        } catch (error) {
+            this.logger.error('Failed to resolve ITV playback', error);
+            this.showPlaybackError(error);
+        } finally {
+            this.isResolvingPlayback.set(false);
+        }
+    }
+
+    async loadMoreEpg() {
+        if (!this.epgChannelId || this.isLoadingEpg()) {
+            return;
+        }
+
+        this.epgPageSize += 10;
+        this.isLoadingEpg.set(true);
+        try {
+            const items = await this.stalkerStore.fetchChannelEpg(
+                this.epgChannelId,
+                this.epgPageSize
+            );
+            this.epgItems.set(items);
+            this.hasMoreEpg.set(items.length >= this.epgPageSize);
+        } catch {
+            this.hasMoreEpg.set(false);
+        } finally {
+            this.isLoadingEpg.set(false);
+        }
     }
 
     async createLinkToPlayVodItv(
@@ -343,6 +474,43 @@ export class RecentlyViewedComponent implements OnDestroy {
         this.stalkerStore.removeFromFavorites(favoriteId, onDone);
     }
 
+    toggleLiveFavorite(item: StalkerVodSource & { category_id: string }): void {
+        const itemId = String(item.id ?? '');
+        if (this.liveFavoriteIds().has(itemId)) {
+            this.removeFromFavorites(itemId);
+            return;
+        }
+
+        this.addToFavorites({
+            ...item,
+            category_id: 'itv',
+            title: item.o_name || item.name,
+            cover: item.logo || item.cover,
+            added_at: new Date().toISOString(),
+        });
+    }
+
+    readonly liveFavoriteIds = computed(() => {
+        const ids = new Map<string | number, boolean>();
+        for (const item of (this.portalFavorites.value() ?? []) as StalkerVodSource[]) {
+            if (item.category_id === 'itv') {
+                ids.set(String(item.id ?? ''), true);
+            }
+        }
+        return ids;
+    });
+
+    private clearLiveSelection() {
+        this.selectedLiveItem.set(null);
+        this.liveStreamUrl.set('');
+        this.isResolvingPlayback.set(false);
+        this.epgItems.set([]);
+        this.isLoadingEpg.set(false);
+        this.hasMoreEpg.set(false);
+        this.epgChannelId = null;
+        this.stalkerStore.setSelectedItem(null);
+    }
+
     /**
      * Normalize recent item to ensure is_series flag is properly set
      * and all required fields are present for the series view
@@ -362,7 +530,56 @@ export class RecentlyViewedComponent implements OnDestroy {
         );
     }
 
-    ngOnDestroy(): void {
-        this.favoritesCtx.reset();
+    private clearDetailsView(): void {
+        const cleared = clearStalkerDetailViewState();
+        this.itemDetails = cleared.itemDetails;
+        this.vodDetailsItem = cleared.vodDetailsItem;
+        this.isSelectedVodFavorite.set(false);
+    }
+
+    inlineDetail() {
+        return createStalkerInlineDetailState(
+            this.itemDetails,
+            this.vodDetailsItem
+        );
+    }
+
+    showDetails() {
+        return this.inlineDetail().categoryId !== null;
+    }
+
+    private async loadEpgForChannel(channelId: number | string | undefined) {
+        if (channelId === undefined || channelId === null) {
+            this.epgItems.set([]);
+            this.hasMoreEpg.set(false);
+            return;
+        }
+
+        this.epgChannelId = channelId;
+        this.epgPageSize = 10;
+        this.isLoadingEpg.set(true);
+        this.epgItems.set([]);
+        this.hasMoreEpg.set(false);
+
+        try {
+            const items = await this.stalkerStore.fetchChannelEpg(
+                channelId,
+                this.epgPageSize
+            );
+            this.epgItems.set(items);
+            this.hasMoreEpg.set(items.length >= this.epgPageSize);
+        } catch {
+            this.epgItems.set([]);
+        } finally {
+            this.isLoadingEpg.set(false);
+        }
+    }
+
+    private showPlaybackError(error: unknown): void {
+        const errorMessage =
+            error instanceof Error && error.message === 'nothing_to_play'
+                ? this.translate.instant('PORTALS.CONTENT_NOT_AVAILABLE')
+                : this.translate.instant('PORTALS.PLAYBACK_ERROR');
+        this.snackBar.open(errorMessage, undefined, { duration: 3000 });
     }
 }

@@ -3,8 +3,8 @@ import {
     ChangeDetectionStrategy,
     Component,
     computed,
-    ElementRef,
     effect,
+    ElementRef,
     inject,
     Injector,
     OnDestroy,
@@ -27,6 +27,9 @@ import { PlaylistSwitcherComponent, ResizableDirective } from 'components';
 import { XtreamCategory } from 'shared-interfaces';
 import { EpgViewComponent, WebPlayerViewComponent } from 'shared-portals';
 import { SettingsStore } from '../../services/settings-store.service';
+import { CategoryViewComponent } from '../../shared/components/category-view/category-view.component';
+import { PortalEmptyStateComponent } from '../../shared/components/portal-empty-state/portal-empty-state.component';
+import { isWorkspaceLayoutRoute } from '../../shared/navigation/portal-route.utils';
 import {
     getAdjacentChannelItem,
     getChannelItemByNumber,
@@ -35,9 +38,6 @@ import {
     CategoryManagementDialogComponent,
     CategoryManagementDialogData,
 } from '../category-management-dialog/category-management-dialog.component';
-import {
-    CategoryViewComponent,
-} from '../category-view/category-view.component';
 import { PortalChannelsListComponent } from '../portal-channels-list/portal-channels-list.component';
 import { FavoritesService } from '../services/favorites.service';
 import { XtreamStore } from '../stores/xtream.store';
@@ -48,7 +48,10 @@ const LIVE_CHANNEL_SORT_STORAGE_KEY = 'xtream-live-channel-sort-mode';
 @Component({
     selector: 'app-live-stream-layout',
     templateUrl: './live-stream-layout.component.html',
-    styleUrls: ['./live-stream-layout.component.scss', '../sidebar.scss'],
+    styleUrls: [
+        './live-stream-layout.component.scss',
+        '../../shared/styles/portal-sidebar.scss',
+    ],
     imports: [
         CategoryViewComponent,
         EpgViewComponent,
@@ -63,6 +66,7 @@ const LIVE_CHANNEL_SORT_STORAGE_KEY = 'xtream-live-channel-sort-mode';
         /* MpvPlayerBarComponent, */
         PlaylistSwitcherComponent,
         PortalChannelsListComponent,
+        PortalEmptyStateComponent,
         ResizableDirective,
         TranslatePipe,
         WebPlayerViewComponent,
@@ -81,8 +85,7 @@ export class LiveStreamLayoutComponent implements OnInit, OnDestroy {
     readonly currentPlaylist = this.xtreamStore.currentPlaylist;
     readonly epgItems = this.xtreamStore.epgItems;
     readonly selectedCategoryId = this.xtreamStore.selectedCategoryId;
-    readonly isWorkspaceLayout =
-        this.route.snapshot.data['layout'] === 'workspace';
+    readonly isWorkspaceLayout = isWorkspaceLayoutRoute(this.route);
     readonly liveChannelSortMode = signal<LiveChannelSortMode>('server');
     private readonly pendingAutoOpenLiveItemId = signal<number | null>(null);
     readonly liveChannelSortLabel = computed(() => {
@@ -136,7 +139,8 @@ export class LiveStreamLayoutComponent implements OnInit, OnDestroy {
                 return;
             }
 
-            const channels = this.xtreamStore.selectItemsFromSelectedCategory() as any[];
+            const channels =
+                this.xtreamStore.selectItemsFromSelectedCategory() as any[];
             if (!Array.isArray(channels) || channels.length === 0) {
                 return;
             }
@@ -161,7 +165,8 @@ export class LiveStreamLayoutComponent implements OnInit, OnDestroy {
 
             const selectedContentType = this.xtreamStore.selectedContentType();
             const selectedItem = this.xtreamStore.selectedItem();
-            const channels = this.xtreamStore.selectItemsFromSelectedCategory() as any[];
+            const channels =
+                this.xtreamStore.selectItemsFromSelectedCategory() as any[];
             const epgItems = this.xtreamStore.epgItems();
 
             if (selectedContentType !== 'live' || !selectedItem?.xtream_id) {
@@ -194,11 +199,11 @@ export class LiveStreamLayoutComponent implements OnInit, OnDestroy {
 
     ngOnInit() {
         if (window.electron?.onChannelChange) {
-            const unsubscribe = window.electron.onChannelChange((data: {
-                direction: 'up' | 'down';
-            }) => {
-                this.handleRemoteChannelChange(data.direction);
-            });
+            const unsubscribe = window.electron.onChannelChange(
+                (data: { direction: 'up' | 'down' }) => {
+                    this.handleRemoteChannelChange(data.direction);
+                }
+            );
             if (typeof unsubscribe === 'function') {
                 this.unsubscribeRemoteChannelChange = unsubscribe;
             }
@@ -318,7 +323,8 @@ export class LiveStreamLayoutComponent implements OnInit, OnDestroy {
             return;
         }
 
-        const channels = this.xtreamStore.selectItemsFromSelectedCategory() as any[];
+        const channels =
+            this.xtreamStore.selectItemsFromSelectedCategory() as any[];
         const nextItem = getAdjacentChannelItem(
             channels,
             activeItem.xtream_id,
@@ -345,7 +351,8 @@ export class LiveStreamLayoutComponent implements OnInit, OnDestroy {
             return;
         }
 
-        const channels = this.xtreamStore.selectItemsFromSelectedCategory() as any[];
+        const channels =
+            this.xtreamStore.selectItemsFromSelectedCategory() as any[];
         const channel = getChannelItemByNumber(channels, command.number);
         if (!channel) {
             return;
@@ -356,7 +363,10 @@ export class LiveStreamLayoutComponent implements OnInit, OnDestroy {
 
     private clearAutoOpenHistoryState(): void {
         try {
-            const state = (window.history.state ?? {}) as Record<string, unknown>;
+            const state = (window.history.state ?? {}) as Record<
+                string,
+                unknown
+            >;
             if (!('openXtreamLiveItemId' in state)) {
                 return;
             }

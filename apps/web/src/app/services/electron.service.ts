@@ -1,6 +1,5 @@
 import { inject, Injectable } from '@angular/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { Params } from '@angular/router';
 import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
 import { PlaylistActions } from 'm3u-state';
@@ -11,11 +10,15 @@ import {
     Playlist,
     PLAYLIST_PARSE_BY_URL,
     PLAYLIST_UPDATE,
-    XtreamCodeActions,
-    XTREAM_RESPONSE,
     XTREAM_REQUEST,
+    XTREAM_RESPONSE,
+    XtreamCodeActions,
 } from 'shared-interfaces';
 import { AppConfig } from '../../environments/environment';
+import {
+    createPortalDebugRequestContext,
+    logPortalDebugEvent,
+} from '../shared/utils/logger';
 
 @Injectable({
     providedIn: 'root',
@@ -36,6 +39,7 @@ export class ElectronService extends DataService {
         super();
         console.log('Electron service initialized...');
         this.setupPlayerErrorListener();
+        this.setupPortalDebugListener();
     }
 
     private setupPlayerErrorListener() {
@@ -59,6 +63,23 @@ export class ElectronService extends DataService {
                 }
             );
         }
+    }
+
+    private setupPortalDebugListener() {
+        const onPortalDebugEvent = (window.electron as any)
+            ?.onPortalDebugEvent as
+            | ((callback: (event: unknown) => void) => void)
+            | undefined;
+
+        if (AppConfig.production || !onPortalDebugEvent) {
+            return;
+        }
+
+        onPortalDebugEvent((event) => {
+            logPortalDebugEvent(
+                event as Parameters<typeof logPortalDebugEvent>[0]
+            );
+        });
     }
 
     getAppVersion(): string {
@@ -95,6 +116,7 @@ export class ElectronService extends DataService {
                 return await window.electron.openInMpv(
                     data.url,
                     data.title ?? '',
+                    data.thumbnail ?? '',
                     data['user-agent'] ?? undefined,
                     data.referer ?? undefined,
                     data.origin ?? undefined,
@@ -121,6 +143,7 @@ export class ElectronService extends DataService {
                 return await window.electron.openInVlc(
                     data.url,
                     data.title ?? '',
+                    data.thumbnail ?? '',
                     data['user-agent'] ?? undefined,
                     data.referer ?? undefined,
                     data.origin ?? undefined,
@@ -164,10 +187,22 @@ export class ElectronService extends DataService {
         url: string;
         macAddress: string;
         params: Record<string, string>;
+        token?: string;
+        serialNumber?: string;
     }) {
+        const context = createPortalDebugRequestContext({
+            provider: 'stalker',
+            operation: payload.params?.action ?? 'unknown',
+            transport: 'electron-renderer',
+            request: payload,
+        });
+
         try {
             // Use Electron IPC to make the Stalker request
-            const response = await window.electron.stalkerRequest(payload);
+            const response = await window.electron.stalkerRequest({
+                ...payload,
+                requestId: context.requestId,
+            } as any);
             return response;
         } catch (err) {
             console.error('Stalker request error:', err);
@@ -183,14 +218,49 @@ export class ElectronService extends DataService {
     }
 
     private async fetchM3uPlaylistFromUrl(payload: Partial<Playlist>) {
-        window.electron.fetchPlaylistByUrl(payload.url).then((result) => {
-            this.store.dispatch(
-                PlaylistActions.handleAddingPlaylistByUrl({
-                    isTemporary: !!payload?.isTemporary,
-                    playlist: result,
-                })
-            );
-        });
+        window.electron
+            .fetchPlaylistByUrl(payload.url)
+            .then((result) => {
+                this.store.dispatch(
+                    PlaylistActions.handleAddingPlaylistByUrl({
+                        isTemporary: !!payload?.isTemporary,
+                        playlist: result,
+                    })
+                );
+            })
+            .catch((error: unknown) => {
+                const statusCode = this.extractHttpStatusCode(error);
+                let messageKey = 'HOME.URL_UPLOAD.ERROR_FETCH_FAILED';
+                if (statusCode === 403) {
+                    messageKey = 'HOME.URL_UPLOAD.ERROR_403';
+                } else if (statusCode === 404) {
+                    messageKey = 'HOME.URL_UPLOAD.ERROR_404';
+                } else if (statusCode === 401) {
+                    messageKey = 'HOME.URL_UPLOAD.ERROR_401';
+                }
+                this.snackBar.open(
+                    this.translateService.instant(messageKey),
+                    this.translateService.instant('CLOSE'),
+                    { duration: 5000 }
+                );
+            });
+    }
+
+    private extractHttpStatusCode(error: unknown): number | null {
+        if (
+            error &&
+            typeof error === 'object' &&
+            'response' in error &&
+            error.response &&
+            typeof error.response === 'object' &&
+            'status' in error.response
+        ) {
+            return error.response.status as number;
+        }
+        // Parse status from error message string (IPC serialization)
+        const msg = String((error as { message?: string })?.message ?? error);
+        const match = msg.match(/status code (\d{3})/);
+        return match ? parseInt(match[1], 10) : null;
     }
 
     private async updateM3uPlaylistFromFile(data: {
@@ -260,9 +330,19 @@ export class ElectronService extends DataService {
         url: string;
         params: Record<string, string>;
     }) {
+        const context = createPortalDebugRequestContext({
+            provider: 'xtream',
+            operation: payload.params?.action ?? 'unknown',
+            transport: 'electron-renderer',
+            request: payload,
+        });
+
         try {
             // Use Electron IPC to make the Xtream request
-            const response = await window.electron.xtreamRequest(payload);
+            const response = await window.electron.xtreamRequest({
+                ...payload,
+                requestId: context.requestId,
+            } as any);
 
             const result = {
                 type: XTREAM_RESPONSE,
@@ -328,9 +408,10 @@ export class ElectronService extends DataService {
                 if (
                     maybeError.error &&
                     typeof maybeError.error === 'object' &&
-                    'message' in (maybeError.error as Record<string, unknown>) &&
-                    typeof (maybeError.error as Record<string, unknown>).message ===
-                        'string'
+                    'message' in
+                        (maybeError.error as Record<string, unknown>) &&
+                    typeof (maybeError.error as Record<string, unknown>)
+                        .message === 'string'
                 ) {
                     return (maybeError.error as Record<string, string>).message;
                 }

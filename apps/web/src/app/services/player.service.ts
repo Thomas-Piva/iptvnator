@@ -2,8 +2,11 @@ import { Injectable, inject } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import { DataService } from 'services';
 import {
+    ExternalPlayerSession,
     OPEN_MPV_PLAYER,
     OPEN_VLC_PLAYER,
+    PlayerContentInfo,
+    ResolvedPortalPlayback,
     VideoPlayer,
 } from 'shared-interfaces';
 import { ExternalPlayerInfoDialogComponent } from '../shared/components/external-player-info-dialog/external-player-info-dialog.component';
@@ -21,6 +24,16 @@ export class PlayerService {
     private dataService = inject(DataService);
     private settingsStore = inject(SettingsStore);
 
+    isEmbeddedPlayer(
+        player = this.settingsStore.player() ?? VideoPlayer.VideoJs
+    ): boolean {
+        return (
+            player === VideoPlayer.VideoJs ||
+            player === VideoPlayer.Html5Player ||
+            player === VideoPlayer.ArtPlayer
+        );
+    }
+
     openPlayer(
         streamUrl: string,
         title: string,
@@ -30,17 +43,48 @@ export class PlayerService {
         userAgent?: string,
         referer?: string,
         origin?: string,
-        contentInfo?: any,
+        contentInfo?: PlayerContentInfo,
         startTime?: number,
         headers?: Record<string, string>
-    ) {
+    ): Promise<ExternalPlayerSession | void> {
+        return this.openResolvedPlayback(
+            {
+                streamUrl,
+                title,
+                thumbnail,
+                startTime,
+                contentInfo,
+                headers,
+                userAgent,
+                referer,
+                origin,
+            },
+            hideExternalInfoDialog
+        );
+    }
+
+    async openResolvedPlayback(
+        playback: ResolvedPortalPlayback,
+        hideExternalInfoDialog = true
+    ): Promise<ExternalPlayerSession | void> {
         const player = this.settingsStore.player() ?? VideoPlayer.VideoJs;
+        const {
+            streamUrl,
+            title,
+            thumbnail,
+            userAgent,
+            referer,
+            origin,
+            headers,
+            contentInfo,
+            startTime,
+        } = playback;
 
         if (player === VideoPlayer.MPV) {
             if (!hideExternalInfoDialog) {
                 this.dialog.open(ExternalPlayerInfoDialogComponent);
             }
-            this.dataService.sendIpcEvent(OPEN_MPV_PLAYER, {
+            return await this.dataService.sendIpcEvent(OPEN_MPV_PLAYER, {
                 url: streamUrl,
                 title,
                 thumbnail,
@@ -55,7 +99,7 @@ export class PlayerService {
             if (!hideExternalInfoDialog) {
                 this.dialog.open(ExternalPlayerInfoDialogComponent);
             }
-            this.dataService.sendIpcEvent(OPEN_VLC_PLAYER, {
+            return await this.dataService.sendIpcEvent(OPEN_VLC_PLAYER, {
                 url: streamUrl,
                 title,
                 thumbnail,
@@ -66,16 +110,16 @@ export class PlayerService {
                 contentInfo,
                 startTime,
             });
-        } else {
-            this.dialog.open<PlayerDialogComponent, PlayerDialogData>(
-                PlayerDialogComponent,
-                {
-                    data: { streamUrl, title, contentInfo, startTime },
-                    width: '80%',
-                    maxWidth: '1200px',
-                    maxHeight: '90vh',
-                }
-            );
         }
+
+        this.dialog.open<PlayerDialogComponent, PlayerDialogData>(
+            PlayerDialogComponent,
+            {
+                data: { streamUrl, title, contentInfo, startTime },
+                width: '80%',
+                maxWidth: '1200px',
+                maxHeight: '90vh',
+            }
+        );
     }
 }

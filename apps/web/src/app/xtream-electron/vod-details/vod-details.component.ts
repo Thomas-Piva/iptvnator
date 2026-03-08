@@ -7,17 +7,20 @@ import {
     OnDestroy,
 } from '@angular/core';
 import { MatIcon } from '@angular/material/icon';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { TranslatePipe } from '@ngx-translate/core';
 import { ContentHeroComponent } from 'components';
 import {
+    ExternalPlayerSession,
+    ResolvedPortalPlayback,
     VodDetailsItem,
     normalizeVodDetails,
     getVodNumericId,
 } from 'shared-interfaces';
 import { DownloadsService } from '../../services/downloads.service';
+import { ExternalPlaybackService } from '../../services/external-playback.service';
 import { SafePipe } from '@iptvnator/pipes';
 import { StalkerStore } from '../../stalker/stalker.store';
+import { PortalInlinePlayerComponent } from '../../shared/components/portal-inline-player/portal-inline-player.component';
 
 /**
  * Unified VOD details component for both Xtream and Stalker portals.
@@ -45,7 +48,7 @@ import { StalkerStore } from '../../stalker/stalker.store';
     imports: [
         ContentHeroComponent,
         MatIcon,
-        MatProgressSpinnerModule,
+        PortalInlinePlayerComponent,
         SafePipe,
         TranslatePipe,
     ],
@@ -61,6 +64,12 @@ export class VodDetailsComponent implements OnDestroy {
 
     /** Playback position in seconds for resume feature (managed by parent) */
     readonly playbackPosition = input<number | null>(null);
+
+    /** Inline playback payload for embedded players (managed by parent) */
+    readonly inlinePlayback = input<ResolvedPortalPlayback | null>(null);
+
+    /** Active external playback session for launch state */
+    readonly externalPlayback = input<ExternalPlayerSession | null>(null);
 
     // ============ Outputs ============
 
@@ -79,9 +88,22 @@ export class VodDetailsComponent implements OnDestroy {
     /** Emitted when download is requested (parent handles URL construction) */
     readonly downloadRequested = output<VodDetailsItem>();
 
+    /** Emitted when inline playback position changes */
+    readonly inlineTimeUpdated = output<{
+        currentTime: number;
+        duration: number;
+    }>();
+
+    /** Emitted when the inline player should be closed */
+    readonly inlinePlaybackClosed = output<void>();
+
+    /** Emitted when the stream url is copied */
+    readonly streamUrlCopied = output<void>();
+
     // ============ Services ============
 
     private readonly downloadsService = inject(DownloadsService);
+    private readonly externalPlaybackService = inject(ExternalPlaybackService);
     private readonly stalkerStore = inject(StalkerStore);
 
     // ============ Computed State ============
@@ -136,6 +158,77 @@ export class VodDetailsComponent implements OnDestroy {
         return this.downloadsService.isDownloading(vodId, item.playlistId, 'vod');
     });
 
+    readonly matchedExternalPlayback = computed(() => {
+        const session = this.externalPlayback();
+        const item = this.item();
+        if (
+            !session?.contentInfo ||
+            session.status === 'closed' ||
+            session.status === 'error'
+        ) {
+            return null;
+        }
+
+        const contentInfo = session.contentInfo;
+        if (
+            contentInfo.playlistId !== item.playlistId ||
+            contentInfo.contentType !== 'vod' ||
+            contentInfo.contentXtreamId !== getVodNumericId(item)
+        ) {
+            return null;
+        }
+
+        return session;
+    });
+
+    readonly externalPrimaryLabel = computed(() => {
+        const session = this.matchedExternalPlayback();
+        if (!session) {
+            return null;
+        }
+
+        const player = session.player.toUpperCase();
+        switch (session.status) {
+            case 'launching':
+                return `Opening in ${player}...`;
+            case 'opened':
+            case 'playing':
+                return `Stop ${player}`;
+            default:
+                return null;
+        }
+    });
+
+    readonly externalPrimaryIcon = computed(() => {
+        const session = this.matchedExternalPlayback();
+        switch (session?.status) {
+            case 'launching':
+                return 'hourglass_top';
+            case 'opened':
+            case 'playing':
+                return 'stop_circle';
+            default:
+                return 'play_arrow';
+        }
+    });
+
+    readonly isExternalLaunchPending = computed(
+        () => this.matchedExternalPlayback()?.status === 'launching'
+    );
+
+    readonly isExternalStopAction = computed(() => {
+        const status = this.matchedExternalPlayback()?.status;
+        return status === 'opened' || status === 'playing';
+    });
+
+    readonly externalPrimaryButtonState = computed(() => {
+        if (this.isExternalLaunchPending()) {
+            return 'launching';
+        }
+
+        return this.isExternalStopAction() ? 'stop' : 'idle';
+    });
+
     // ============ Lifecycle ============
 
     ngOnDestroy(): void {
@@ -150,6 +243,20 @@ export class VodDetailsComponent implements OnDestroy {
     /** Handle play button click */
     onPlay(): void {
         this.playClicked.emit(this.item());
+    }
+
+    onPrimaryAction(): void {
+        if (this.isExternalStopAction()) {
+            void this.stopExternalPlayback();
+            return;
+        }
+
+        if (this.hasPlaybackPosition()) {
+            this.onResume();
+            return;
+        }
+
+        this.onPlay();
     }
 
     /** Handle resume button click */
@@ -179,6 +286,27 @@ export class VodDetailsComponent implements OnDestroy {
     /** Handle download request */
     onDownload(): void {
         this.downloadRequested.emit(this.item());
+    }
+
+    onInlineTimeUpdate(event: {
+        currentTime: number;
+        duration: number;
+    }): void {
+        this.inlineTimeUpdated.emit(event);
+    }
+
+    closeInlinePlayback(): void {
+        this.inlinePlaybackClosed.emit();
+    }
+
+    onStreamUrlCopied(): void {
+        this.streamUrlCopied.emit();
+    }
+
+    async stopExternalPlayback(): Promise<void> {
+        await this.externalPlaybackService.closeSession(
+            this.matchedExternalPlayback()
+        );
     }
 
     /** Play from local downloaded file */
