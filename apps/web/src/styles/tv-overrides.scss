@@ -1,0 +1,110 @@
+// ─── TV Mode Overrides ────────────────────────────────────────────────────────
+// Applied when body has the `tv-mode` class (Fire TV, Android TV).
+// These styles optimize the UI for 10-foot (TV) viewing experience with D-pad.
+
+body.tv-mode {
+
+    // ── Overscan-safe margins ─────────────────────────────────────────────
+    // TVs may cut off edges; ensure content stays within safe zone
+    app-root {
+        padding: 24px 48px;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+
+    // ── Focus indicators ──────────────────────────────────────────────────
+    // D-pad navigation requires strong visible focus indicators
+    .tv-focusable:focus,
+    .tv-focused,
+    button:focus,
+    a:focus,
+    [tabindex="0"]:focus,
+    mat-list-item:focus,
+    .mat-mdc-list-item:focus,
+    .mdc-list-item:focus,
+    input:focus,
+    mat-card:focus,
+    .mat-mdc-card:focus {
+        outline: 3px solid var(--mat-sys-primary, #bb86fc) !important;
+        outline-offset: 2px;
+        box-shadow: 0 0 0 6px rgba(187, 134, 252, 0.3) !important;
+        border-radius: 8px;
+        transition: outline 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    // ── Disable hover effects ─────────────────────────────────────────────
+    // TV has no mouse cursor, so hover states are useless
+    *:hover {
+        // Suppress hover effects on TV — no mouse cursor available
+        cursor: default;
+    }
+
+    // ── Larger touch targets ──────────────────────────────────────────────
+    // Minimum 48px for all interactive elements (TV accessibility)
+    button,
+    a,
+    [tabindex="0"],
+    mat-list-item,
+    .mat-mdc-list-item,
+    .mdc-list-item,
+    .mat-mdc-icon-button {
+        min-height: 48px;
+        min-width: 48px;
+    }
+
+    // ── Typography ────────────────────────────────────────────────────────
+    // Slightly larger base text for TV viewing distance
+    body,
+    html {
+        font-size: 18px;
+    }
+
+    // ── Scrollbar ─────────────────────────────────────────────────────────
+    // Hide scrollbars on TV (navigate with D-pad)
+    ::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+        display: none;
+    }
+
+    // ── No text selection on TV ───────────────────────────────────────────
+    * {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+    }
+
+    // ── Sidebar and navigation adjustments ────────────────────────────────
+    // Make navigation items larger and more spaced for D-pad
+    app-navigation,
+    .mat-drawer-inner-container {
+        .mat-mdc-list-item {
+            padding: 12px 16px;
+            margin-bottom: 4px;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+    }
+
+    // ── Channel list items ────────────────────────────────────────────────
+    // Larger items for easier D-pad navigation in channel lists
+    app-channel-list-item {
+        .mat-mdc-list-item {
+            min-height: 64px;
+            padding: 8px 16px;
+        }
+    }
+
+    // ── Dialog adjustments ────────────────────────────────────────────────
+    // Dialogs should be larger and more visible on TV
+    .mat-mdc-dialog-surface {
+        min-width: 500px;
+        padding: 24px;
+    }
+
+    // ── Hide desktop-only elements ────────────────────────────────────────
+    // Elements not useful on TV
+    .desktop-only,
+    .drag-handle {
+        display: none !important;
+    }
+}

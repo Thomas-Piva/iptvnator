@@ -13,6 +13,9 @@
 // ─── Google Fonts ─────────────────────────────────────────────────────────────
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+// ─── TV Mode (Fire TV / Android TV) ──────────────────────────────────────────
+@import './styles/tv-overrides';
+
 // ─── Shared Components ────────────────────────────────────────────────────────
 
 // ─── macOS specific: space for traffic lights ─────────────────────────────────
@@ -122,4 +125,3 @@ textarea,
 .global-search-overlay .mat-mdc-dialog-container {
     app-region: no-drag;
 }
-

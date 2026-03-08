@@ -1,4 +1,5 @@
 import { Component, HostBinding, inject, OnInit } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Router, RouterOutlet } from '@angular/router';
@@ -17,6 +18,7 @@ import {
     Theme,
 } from 'shared-interfaces';
 import { SettingsService } from './services/settings.service';
+import { PlatformDetectionService } from './services/platform-detection.service';
 import { EpgProgressPanelComponent } from './shared/epg-progress-panel/epg-progress-panel.component';
 import { GlobalRecentlyViewedComponent } from './xtream-electron/recently-viewed/global-recently-viewed.component';
 import { GlobalSearchResultsComponent } from './xtream-electron/search-results/global-search-results.component';
@@ -41,6 +43,8 @@ export class AppComponent implements OnInit {
     private store = inject(Store);
     private translate = inject(TranslateService);
     private settingsService = inject(SettingsService);
+    private platformDetection = inject(PlatformDetectionService);
+    private document = inject(DOCUMENT);
 
     /** Default language as fallback */
     private readonly DEFAULT_LANG = Language.ENGLISH;
@@ -77,6 +81,11 @@ export class AppComponent implements OnInit {
                     }
                 }
             });
+        }
+
+        // Fire TV / Android TV: Add tv-mode class for D-pad navigation & TV UI
+        if (this.platformDetection.isTVDevice()) {
+            this.document.body.classList.add('tv-mode');
         }
     }
 
