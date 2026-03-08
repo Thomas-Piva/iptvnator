@@ -6,7 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 IPTVnator is a cross-platform IPTV player application built with Angular and Electron, supporting M3U/M3U8 playlists, Xtream Codes API, and Stalker portals.
 
-**Dual Environment Support**: The application is designed to work in both Electron and as a Progressive Web App (PWA). The architecture uses a factory pattern to inject environment-specific services at runtime, ensuring the same codebase works in both contexts.
+**Multi-Environment Support**: The application runs in three environments:
+- **Electron** — Full-featured desktop app with local SQLite database and external player support
+- **PWA** — Lightweight web version running in any browser
+- **Fire TV / Android TV** — PWA wrapped in a Capacitor Android WebView, optimized for D-pad navigation and 10-foot UI
+
+The architecture uses a factory pattern to inject environment-specific services at runtime, ensuring the same codebase works in all contexts.
 
 ## Development Commands
 
@@ -54,6 +59,28 @@ pnpm run make:app
 nx run electron-backend:make
 ```
 
+### Fire TV / Android TV Build
+
+```bash
+# Full pipeline (build PWA → sync → APK)
+.\scripts\build-firetv.ps1
+
+# Or manual steps:
+# 1. Build the PWA
+npx nx build web --configuration=pwa
+
+# 2. Sync web assets to Capacitor Android
+npx cap sync android
+
+# 3. Build debug APK
+cd android
+.\gradlew.bat assembleDebug
+
+# APK output: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Prerequisites**: Android SDK (`ANDROID_HOME=C:\Android\sdk`), Java 17+
+
 ### Testing
 
 ```bash
@@ -93,6 +120,7 @@ This is an Nx monorepo with the following structure:
 - **apps/web** - Angular application (frontend)
 - **apps/electron-backend** - Electron main process
 - **apps/web-e2e** - Playwright end-to-end tests
+- **android/** - Capacitor Android project (Fire TV / Android TV wrapper)
 - **libs/** - Shared libraries:
     - **m3u-state** - NgRx state management for playlists
     - **services** - Abstract DataService and implementations
@@ -101,6 +129,8 @@ This is an Nx monorepo with the following structure:
     - **ui/components** - Reusable UI components
     - **ui/pipes** - Angular pipes
     - **ui/shared-portals** - Portal-related UI components
+- **scripts/** - Build scripts:
+    - **build-firetv.ps1** - Full Fire TV APK build pipeline
 
 ### Frontend Architecture (Angular)
 
@@ -417,6 +447,51 @@ This project uses modern Angular signal-based APIs and patterns. **ALWAYS** use 
 
 - Per-playlist favorites and global favorites
 - Recently viewed tracks watch history
+
+**Fire TV / Android TV Support**:
+
+- PWA wrapped in Capacitor Android WebView for sideloadable APK
+- D-pad remote navigation with visible focus indicators
+- TV-optimized 10-foot interface (overscan-safe, large touch targets, no hover states)
+- Fire TV launcher integration (`LEANBACK_LAUNCHER` intent)
+- Landscape-locked, fullscreen display
+
+### Fire TV / Android TV Architecture
+
+The Fire TV build wraps the PWA output in a **Capacitor** Android WebView app.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Fire Stick / Android TV             │
+│  ┌───────────────────────────────────────────────┐  │
+│  │              Android WebView (Capacitor)       │  │
+│  │  ┌─────────────────────────────────────────┐  │  │
+│  │  │         IPTVnator PWA (Angular)          │  │  │
+│  │  │  + tv-overrides.scss (body.tv-mode)      │  │  │
+│  │  │  + PlatformDetectionService              │  │  │
+│  │  │  + TvFocusDirective (D-pad navigation)   │  │  │
+│  │  └─────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
+
+Key files:
+
+| File | Purpose |
+|------|---------|
+| `capacitor.config.ts` | App ID, web dir, mixed content for IPTV streams |
+| `android/app/src/main/AndroidManifest.xml` | Fire TV manifest — `LEANBACK_LAUNCHER`, landscape, no touchscreen |
+| `apps/web/src/app/services/platform-detection.service.ts` | Detects Fire TV / Android TV via user agent (`isFireTV`, `isTVDevice` signals) |
+| `apps/web/src/app/directives/tv-focus.directive.ts` | D-pad navigation — makes elements focusable, Enter/Space triggers click |
+| `apps/web/src/styles/tv-overrides.scss` | TV CSS — overscan margins, focus rings, 48px targets, hidden scrollbars |
+| `scripts/build-firetv.ps1` | PowerShell build script (PWA → Capacitor sync → Gradle APK) |
+| `android/variables.gradle` | Android SDK versions — `compileSdkVersion=36`, `minSdkVersion=24` |
+
+Platform detection flow:
+1. `PlatformDetectionService` checks `navigator.userAgent` for "AFT" (Fire TV) or "Android TV"
+2. `AppComponent` adds `body.tv-mode` CSS class when TV is detected
+3. `tv-overrides.scss` applies TV-specific styles scoped under `body.tv-mode`
+4. `TvFocusDirective` (`[appTvFocus]`) enables D-pad focus management on interactive elements
 
 **Internationalization**:
 
